@@ -8,8 +8,15 @@ publish.workspace = true
 [features]
 # whisper.cpp com backend Vulkan (exige o Vulkan SDK no build).
 vulkan = ["whisper-rs/vulkan"]
+# Spike D: modelo embutido no binário exe_unico.
+embedded-model = ["scriba-model/embedded-model"]
+
+[[bin]]
+name = "exe_unico"
+required-features = ["embedded-model"]
 
 [dependencies]
+scriba-model = { path = "../scriba-model" }
 anyhow.workspace = true
 cpal.workspace = true
 hound.workspace = true

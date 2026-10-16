@@ -50,8 +50,15 @@ pub fn transcribe(ctx: &WhisperContext, audio: &[f32]) -> anyhow::Result<String>
 /// Quantas palavras-chave da fixture `fala` aparecem no texto (sem caixa).
 pub fn keyword_hits(text: &str) -> usize {
     let t = text.to_lowercase();
-    ["bom dia", "scriba", "reunião", "orçamento", "amanhã", "nove horas"]
-        .iter()
-        .filter(|k| t.contains(*k))
-        .count()
+    [
+        "bom dia",
+        "scriba",
+        "reunião",
+        "orçamento",
+        "amanhã",
+        "nove horas",
+    ]
+    .iter()
+    .filter(|k| t.contains(*k))
+    .count()
 }
