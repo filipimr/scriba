@@ -19,5 +19,6 @@ required-features = ["embedded-model"]
 scriba-model = { path = "../scriba-model" }
 anyhow.workspace = true
 cpal.workspace = true
+ffmpeg-next.workspace = true
 hound.workspace = true
 whisper-rs.workspace = true

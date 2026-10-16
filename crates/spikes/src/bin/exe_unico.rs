@@ -7,7 +7,9 @@ use whisper_rs::{WhisperContext, WhisperContextParameters};
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let wav = args.get(1).expect("uso: exe_unico <fala.wav> [--gpu <índice>]");
+    let wav = args
+        .get(1)
+        .expect("uso: exe_unico <fala.wav> [--gpu <índice>]");
     let gpu = args
         .iter()
         .position(|a| a == "--gpu")

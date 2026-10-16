@@ -35,6 +35,12 @@ pub fn transcribe(ctx: &WhisperContext, audio: &[f32]) -> anyhow::Result<String>
     let mut state = ctx.create_state()?;
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
     params.set_language(Some("pt"));
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let threads = std::env::var("SCRIBA_THREADS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(cores.saturating_sub(2).max(1) as i32);
+    params.set_n_threads(threads);
     params.set_no_context(true);
     params.set_print_progress(false);
     params.set_print_realtime(false);
