@@ -1,0 +1,31 @@
+[package]
+name = "scriba"
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+
+[workspace]
+members = ["crates/scriba-model", "crates/spikes", "xtask"]
+
+[workspace.package]
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+cpal = "0.18.2"
+ffmpeg-next = { version = "9.0.0", default-features = false, features = ["codec", "format", "software-resampling", "software-scaling", "static"] }
+hex = "0.4.3"
+hound = "3.5.1"
+sha2 = "0.11.1"
+ureq = "3.4.2"
+whisper-rs = "0.16.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

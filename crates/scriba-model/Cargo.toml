@@ -1,0 +1,10 @@
+[package]
+name = "scriba-model"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Embute o modelo no binário (só no release; o dev carrega de models/).
+embedded-model = []

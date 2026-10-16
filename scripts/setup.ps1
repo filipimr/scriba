@@ -21,6 +21,8 @@ Install-Winget 'Rustlang.Rustup'
 Install-Winget 'LLVM.LLVM'
 Install-Winget 'Kitware.CMake'
 Install-Winget 'KhronosGroup.VulkanSDK'
+# CLI do FFmpeg so para gerar fixtures (MP3/OGG/MP4). O app usa o FFmpeg estatico do vcpkg.
+Install-Winget 'Gyan.FFmpeg.Essentials'
 
 $rustup = "$env:USERPROFILE\.cargo\bin\rustup.exe"
 if (Test-Path $rustup) { & $rustup default stable-x86_64-pc-windows-msvc }

@@ -1,0 +1,36 @@
+mod fixtures;
+mod models;
+
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(about = "Tarefas de desenvolvimento do Scriba")]
+struct Cli {
+    #[command(subcommand)]
+    cmd: Cmd,
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// Baixa os modelos para models/ e confere o SHA-256.
+    Model,
+    /// Gera as fixtures de fala pt-BR em tests/fixtures/ com a voz Maria.
+    Fixtures,
+}
+
+fn main() -> anyhow::Result<()> {
+    match Cli::parse().cmd {
+        Cmd::Model => models::download_all(&root().join("models")),
+        Cmd::Fixtures => fixtures::generate(&root().join("tests").join("fixtures")),
+    }
+}
+
+/// Raiz do workspace (pai do diretório do xtask).
+fn root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask fica dentro do workspace")
+        .to_path_buf()
+}

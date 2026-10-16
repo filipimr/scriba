@@ -1,0 +1,12 @@
+{
+  "name": "scriba",
+  "version-string": "0.0.0",
+  "builtin-baseline": "7d5f3c6241729acbbb7774f54bf687429aaf6492",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": ["avcodec", "avformat", "swresample", "swscale", "x264", "gpl", "nvcodec"]
+    }
+  ]
+}
