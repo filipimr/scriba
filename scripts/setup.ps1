@@ -37,6 +37,8 @@ if (-not (Test-Path "$vcpkg\vcpkg.exe")) {
 
 [Environment]::SetEnvironmentVariable('VCPKG_ROOT', $vcpkg, 'User')
 [Environment]::SetEnvironmentVariable('LIBCLANG_PATH', 'C:\Program Files\LLVM\bin', 'User')
+# target/ em caminho curto: o build Vulkan do whisper.cpp estoura MAX_PATH (260) dentro do repo.
+[Environment]::SetEnvironmentVariable('CARGO_TARGET_DIR', 'C:\dev\t\scriba', 'User')
 
 # Build Tools ja listado mas sem o compilador C++: adiciona os componentes.
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
