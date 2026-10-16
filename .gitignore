@@ -1,0 +1,6 @@
+/target/
+/models/
+/vcpkg_installed/
+/.claude/settings.local.json
+*.wav
+!tests/fixtures/**/*.wav
