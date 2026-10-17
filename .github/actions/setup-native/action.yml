@@ -1,0 +1,78 @@
+name: setup-native
+description: >
+  Rust fixado, FFmpeg estático do vcpkg (com cache), cache do Cargo e modelo de teste.
+  O target dir fica curto (C:\t): o build do whisper.cpp estoura MAX_PATH no repositório.
+
+inputs:
+  tools:
+    description: Ferramentas cargo extras via taiki-e/install-action (separadas por vírgula).
+    default: ""
+  model:
+    description: Baixa o modelo base q5_1 para models/.
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Ambiente do build
+      shell: pwsh
+      run: |
+        "CARGO_TARGET_DIR=C:\t" >> $env:GITHUB_ENV
+        "VCPKG_ROOT=C:\vcpkg-scriba" >> $env:GITHUB_ENV
+        "CARGO_TERM_COLOR=always" >> $env:GITHUB_ENV
+        # O LLVM vem pré-instalado no runner, no mesmo caminho de .cargo/config.toml.
+        if (-not (Test-Path "C:\Program Files\LLVM\bin\libclang.dll")) { throw "libclang ausente" }
+
+    - name: Rust (rust-toolchain.toml)
+      shell: pwsh
+      run: |
+        rustup show active-toolchain || rustup toolchain install
+        rustc --version
+
+    - name: Cache do FFmpeg (vcpkg_installed)
+      id: vcpkg-cache
+      uses: actions/cache@v4
+      with:
+        path: vcpkg_installed
+        key: vcpkg-x64-windows-static-${{ hashFiles('vcpkg.json') }}
+
+    - name: FFmpeg estático (vcpkg)
+      if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        # Clone completo: o modo manifesto resolve o builtin-baseline pelo histórico do git.
+        git clone https://github.com/microsoft/vcpkg $env:VCPKG_ROOT
+        & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+        & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet x64-windows-static --x-install-root=vcpkg_installed
+        if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+    - name: Salvar cache do FFmpeg mesmo se o job falhar depois
+      if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: vcpkg_installed
+        key: vcpkg-x64-windows-static-${{ hashFiles('vcpkg.json') }}
+
+    - name: Cache do Cargo
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: ". -> C:\\t"
+
+    - name: Ferramentas cargo
+      if: inputs.tools != ''
+      uses: taiki-e/install-action@v2
+      with:
+        tool: ${{ inputs.tools }}
+
+    - name: Cache do modelo base
+      if: inputs.model == 'true'
+      id: model-cache
+      uses: actions/cache@v4
+      with:
+        path: models/ggml-base-q5_1.bin
+        key: model-base-q5_1-422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898
+
+    - name: Baixar modelo base
+      if: inputs.model == 'true' && steps.model-cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: cargo xtask model --only base

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Scriba: licenças de terceiros</title>
+<style>body{font-family:system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem}pre{white-space:pre-wrap;background:#f5f5f7;padding:1rem}</style>
+</head>
+<body>
+<h1>Licenças de terceiros</h1>
+<p>O Scriba é distribuído sob a GPL-3.0-or-later. Além dos crates abaixo, o executável inclui o FFmpeg com x264 (GPL), o whisper.cpp/ggml (MIT) e o modelo Whisper da OpenAI (MIT).</p>
+<h2>Resumo</h2>
+<ul>
+{{#each overview}}<li>{{name}} ({{count}})</li>
+{{/each}}
+</ul>
+{{#each licenses}}
+<h2 id="{{id}}">{{name}}</h2>
+<p>Usada por:</p>
+<ul>
+{{#each used_by}}<li>{{crate.name}} {{crate.version}}</li>
+{{/each}}
+</ul>
+<pre>{{text}}</pre>
+{{/each}}
+</body>
+</html>

@@ -1,11 +1,21 @@
 [package]
 name = "scriba"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 publish = false
 
+[features]
+# Embute o modelo base e a amostra usados pelo `--self-test` (release do CI).
+embedded-test-model = ["scriba-model/embedded-test-model"]
+
 [dependencies]
+scriba-model = { path = "crates/scriba-model" }
+anyhow.workspace = true
+clap.workspace = true
+ffmpeg-next.workspace = true
+hound.workspace = true
+whisper-rs.workspace = true
 
 [workspace]
 members = ["crates/scriba-model", "crates/spikes", "xtask"]

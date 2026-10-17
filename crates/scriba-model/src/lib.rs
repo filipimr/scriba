@@ -18,3 +18,21 @@ pub const VAD: Option<&[u8]> = Some(include_bytes!(concat!(
 )));
 #[cfg(not(feature = "embedded-model"))]
 pub const VAD: Option<&[u8]> = None;
+
+/// Modelo `base` q5_1 (~60 MB) e amostra de fala para o `scriba --self-test` da
+/// release, que roda em CPU no runner sem GPU.
+#[cfg(feature = "embedded-test-model")]
+pub const TEST_WHISPER: Option<&[u8]> = Some(include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../models/ggml-base-q5_1.bin"
+)));
+#[cfg(not(feature = "embedded-test-model"))]
+pub const TEST_WHISPER: Option<&[u8]> = None;
+
+#[cfg(feature = "embedded-test-model")]
+pub const TEST_SAMPLE: Option<&[u8]> = Some(include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/fala.wav"
+)));
+#[cfg(not(feature = "embedded-test-model"))]
+pub const TEST_SAMPLE: Option<&[u8]> = None;

@@ -4,16 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Phase 0 (foundation and risk spikes) is done. The workspace has a placeholder `scriba` binary (`src/main.rs`), `crates/scriba-model` (model embedded via `include_bytes!` behind the `embedded-model` feature), `crates/spikes` (the Phase 0 spikes as tests), and `xtask`. No app features exist yet. Document new commands here as each phase adds them.
+Phase 0 (foundation and risk spikes) is done; Phase 1 (CI/CD) is in progress on GitHub at `filipimr/scriba` (public). The workspace has a placeholder `scriba` binary (`src/main.rs`, only `--self-test` in `src/self_test.rs`), `crates/scriba-model` (model embedded via `include_bytes!` behind the `embedded-model` feature), `crates/spikes` (the Phase 0 spikes as tests), and `xtask`. No app features exist yet. Document new commands here as each phase adds them.
 
 ## Environment and commands
 
 - One-time setup, in an admin PowerShell: `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1`. It is idempotent; `-LimparVcpkg` deletes vcpkg temp files. It installs the toolchain and sets the user variables `VCPKG_ROOT=C:\dev\vcpkg`, `LIBCLANG_PATH`, and `CARGO_TARGET_DIR=C:\dev\t\scriba`. The short target dir is required: inside the repo, the whisper.cpp Vulkan build exceeds MAX_PATH.
 - Static FFmpeg (once, ~12–20 min, then cached): `C:\dev\vcpkg\vcpkg.exe install --triplet x64-windows-static --x-install-root=vcpkg_installed`. In manifest mode, installing another triplet replaces `vcpkg_installed/`.
 - `.cargo/config.toml` holds the build env: triplet `x64-windows-static`, `+crt-static`, `FFMPEG_DIR`, the whisper.cpp `GGML_*` SIMD baseline, and `CMAKE_MSVC_RUNTIME_LIBRARY`. Changing `GGML_*`/`CMAKE_*` needs `cargo clean -p whisper-rs-sys`, because the build script does not track them.
-- `cargo xtask model` downloads the models to `models/` and checks SHA-256. `cargo xtask fixtures` regenerates `tests/fixtures/`; it needs the "Microsoft Maria" SAPI voice and the `ffmpeg` CLI.
+- `cargo xtask model` downloads the models to `models/` and checks SHA-256; `--only base` downloads just the small test model (what CI uses). `cargo xtask fixtures` regenerates `tests/fixtures/`; it needs the "Microsoft Maria" SAPI voice and the `ffmpeg` CLI.
 - Lint: `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --features spikes/vulkan -- -D warnings`.
 - Tests: `cargo test --workspace --features spikes/vulkan`. Hardware tests (GPU, NVENC, real audio devices, large model) are `#[ignore = "hardware"]`; run them locally with `cargo test -p spikes --features vulkan -- --ignored`. Measure whisper speed only in `--release`.
+- CI runs `cargo llvm-cov nextest --workspace --profile ci` (nextest config in `.config/nextest.toml` serializes whisper tests) and `cargo deny check` (`deny.toml`). CI has no Vulkan, so clippy there runs without `spikes/vulkan`.
+- `scriba --self-test` transcribes a sample on CPU and encodes a short x264 clip. Release builds use `cargo build --release --features embedded-test-model` (embeds `ggml-base-q5_1.bin` + `tests/fixtures/fala.wav`); without the feature it reads from `models/`.
+- Releases: push a tag `vX.Y.Z` matching the `scriba` version in `Cargo.toml`; `.github/workflows/release.yml` builds, smoke-tests, and publishes exe + SHA-256 + `THIRD_PARTY_LICENSES.html` (`cargo about`).
+- E2E: `cd e2e && npm ci && npx playwright test` (placeholder until Phase 2).
 - Spike D binary: `cargo build --release -p spikes --features "vulkan embedded-model" --bin exe_unico`.
 
 - `ROADMAP.md` (pt-BR) is the project plan. It covers:

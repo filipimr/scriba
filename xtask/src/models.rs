@@ -29,9 +29,16 @@ pub const MODELS: &[Model] = &[
     },
 ];
 
-pub fn download_all(dir: &Path) -> anyhow::Result<()> {
+pub fn download(dir: &Path, only: Option<&str>) -> anyhow::Result<()> {
     fs::create_dir_all(dir)?;
-    for m in MODELS {
+    let selected: Vec<_> = MODELS
+        .iter()
+        .filter(|m| only.is_none_or(|o| m.file.contains(o)))
+        .collect();
+    if selected.is_empty() {
+        bail!("nenhum modelo corresponde a {only:?}");
+    }
+    for m in selected {
         let path = dir.join(m.file);
         if path.exists() && sha256_file(&path)? == m.sha256 {
             println!("ok   {}", m.file);
