@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Phase 0 (foundation and risk spikes) is done; Phase 1 (CI/CD) is in progress on GitHub at `filipimr/scriba` (public). The workspace has a placeholder `scriba` binary (`src/main.rs`, only `--self-test` in `src/self_test.rs`), `crates/scriba-model` (model embedded via `include_bytes!` behind the `embedded-model` feature), `crates/spikes` (the Phase 0 spikes as tests), and `xtask`. No app features exist yet. Document new commands here as each phase adds them.
+Phase 0 (foundation and risk spikes) is done; Phase 1 (CI/CD) is done; the repo is `filipimr/scriba` (public) with `main` protected (checks `checks` and `deny` required). The workspace has a placeholder `scriba` binary (`src/main.rs`, only `--self-test` in `src/self_test.rs`), `crates/scriba-model` (model embedded via `include_bytes!` behind the `embedded-model` feature), `crates/spikes` (the Phase 0 spikes as tests), and `xtask`. No app features exist yet. Document new commands here as each phase adds them.
 
 ## Environment and commands
 

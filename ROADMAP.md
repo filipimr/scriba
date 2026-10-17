@@ -2,14 +2,14 @@
 
 App local para Windows, distribuído como um único `.exe`, que **grava** (microfone + som do PC), **compacta** (vídeos e áudios) e **transcreve tudo o que foi falado**, entregando o **texto**. Este documento reúne as decisões de produto e de arquitetura, as fases de desenvolvimento com checklists, a política de testes, os riscos e o registro de decisões.
 
-Última atualização: 2026-10-16.
+Última atualização: 2026-10-17.
 
 ## Status das fases
 
 | Fase | Tema | Status |
 | --- | --- | --- |
 | 0 | Fundação e spikes de risco | Concluída |
-| 1 | CI/CD no GitHub | Em andamento |
+| 1 | CI/CD no GitHub | Concluída |
 | 2 | Esqueleto do app e design system | Não iniciada |
 | 3 | Fila de jobs e upload | Não iniciada |
 | 4 | Transcrição de arquivos (MVP) | Não iniciada |
@@ -186,29 +186,29 @@ Objetivo: a partir daqui, todo PR passa por verificação automática e toda tag
 
 **Entregas:**
 
-- [ ] Repositório no GitHub, com nome e visibilidade definidos pelo mantenedor.
-- [ ] Proteção da `main` exigindo CI verde.
-- [ ] Template de PR com o checklist de testes.
-- [ ] Dependabot para cargo, npm (`e2e/`) e GitHub Actions.
-- [ ] `ci.yml` (push e PR, com `concurrency` cancelando execuções antigas):
+- [x] Repositório no GitHub, com nome e visibilidade definidos pelo mantenedor.
+- [x] Proteção da `main` exigindo CI verde.
+- [x] Template de PR com o checklist de testes.
+- [x] Dependabot para cargo, npm (`e2e/`) e GitHub Actions.
+- [x] `ci.yml` (push e PR, com `concurrency` cancelando execuções antigas):
   - Job `checks` (windows-latest): `fmt --check`, `clippy -D warnings`, nextest (unit + integração), Playwright E2E e cobertura com piso.
   - Job `deny` (ubuntu, mais barato): `cargo deny` para vulnerabilidades (RustSec) e licenças compatíveis com GPL.
-- [ ] Ação composta `setup-native`:
+- [x] Ação composta `setup-native`:
   - Rust fixado.
   - vcpkg com cache de binários (`VCPKG_BINARY_SOURCES` + `actions/cache`).
   - `Swatinem/rust-cache`.
   - Cache do modelo de teste por SHA-256.
-- [ ] `release.yml` (tag `v*`):
+- [x] `release.yml` (tag `v*`):
   - Confere se a tag bate com a versão do Cargo e faz o build de release.
   - **Smoke test** do exe (`scriba.exe --self-test`: carrega o modelo, transcreve uma amostra embutida e codifica um clipe curto).
   - Gera o SHA-256 e publica a GitHub Release com notas automáticas e `THIRD_PARTY_LICENSES` (`cargo about`).
-- [ ] `LICENSE` GPL-3.0, exigida ao distribuir o exe com x264.
+- [x] `LICENSE` GPL-3.0, exigida ao distribuir o exe com x264.
 
 **Pronto quando:**
 
-- [ ] Um PR com teste quebrado fica bloqueado.
-- [ ] Um PR verde roda em menos de 20 min com cache. A 1ª execução compila o FFmpeg e leva ~1 h.
-- [ ] A tag `v0.1.0` publica uma release com o exe do esqueleto e o checksum.
+- [x] Um PR com teste quebrado fica bloqueado.
+- [x] Um PR verde roda em menos de 20 min com cache. A 1ª execução compila o FFmpeg e leva ~1 h.
+- [x] A tag `v0.1.0` publica uma release com o exe do esqueleto e o checksum.
 
 Observação: em repositório privado, os minutos do GitHub Actions têm cota, e os runners Windows consomem mais. Cache, `concurrency` e filtros de caminho reduzem esse consumo.
 
@@ -452,6 +452,13 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-16 | Fase 0 | Política de backend da Fase 4: GPU dedicada → GPU integrada → CPU com modelo menor embutido (`small` ou `base`, por benchmark). Metas para 1 h de áudio: ≤ 10 min na RTX 3050 e ≤ 1 h na CPU | Estimativa linear do spike A: 1 h de áudio levaria ~5 min na RTX, ~80 min na integrada e ~8 h na CPU com o modelo grande |
 | 2026-10-16 | Fase 0 | Medições: extração de áudio de MP4/MP3/M4A/OGG dá 10,93 s, igual ao WAV; x264 e NVENC codificam 2 s de vídeo; o exe de teste não lista DLLs do FFmpeg | Spike B |
 | 2026-10-16 | Fase 0 | Medições: mic 29,930 s e loopback 30,010 s em 30 s sem som no PC (diferença de 80 ms, limite de 100 ms), com o stream de silêncio na saída. WASAPI compartilhado entrega f32 48 kHz estéreo | Spike C. A folga é pequena: o alinhamento por timestamp da Fase 5 é necessário |
+| 2026-10-17 | Fase 1 | Repositório `filipimr/scriba` público | Proteção da `main` e Actions sem cota no plano Free; o código é GPL |
+| 2026-10-17 | Fase 1 | `scriba --self-test` em CPU com o modelo `base` q5_1 e `fala.wav` embutidos (feature `embedded-test-model`); exe de 83 MB. O modelo grande e o Vulkan na release ficam para a Fase 7 | O runner não tem GPU nem Vulkan SDK; prova carga da memória, whisper e x264 |
+| 2026-10-17 | Fase 1 | CI sem a feature `vulkan` (clippy e testes); testes de whisper em série via grupo do nextest; piso de cobertura de 70% só nos crates do app (spikes e xtask fora) | Runner sem Vulkan; achado (3) do spike A |
+| 2026-10-17 | Fase 1 | Cache do FFmpeg = `vcpkg_installed/` inteiro, chaveado pelo hash do `vcpkg.json`, salvo mesmo se o job falhar. A versão do `vcpkg.json` fica fixa: mudar o arquivo recompila o FFmpeg | Simples e sem servidor de binários |
+| 2026-10-17 | Fase 1 | CI roda em todo PR (sem `paths-ignore`); só o push na `main` ignora `.md` e `docs/` | Com checks obrigatórios, um PR só de documentação nunca receberia os checks e ficaria bloqueado |
+| 2026-10-17 | Fase 1 | E2E: projeto Playwright em `e2e/` com um teste pulado até a Fase 2 trazer o servidor | O job já existe e roda no CI |
+| 2026-10-17 | Fase 1 | Medições no runner windows-latest: sem cache do FFmpeg, 34–36 min (compilação do FFmpeg ~30 min, abaixo da estimativa de 1 h); com cache, `checks` 3 min 48 s e `deny` ~40 s; release sem cache 33 min; o self-test transcreve os 10,9 s da amostra em 48 s em CPU | O cache é por ref: PRs leem o da `main`, aquecido a cada push nela |
 
 ## Referências verificadas
 
