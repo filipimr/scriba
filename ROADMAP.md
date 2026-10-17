@@ -9,7 +9,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | Fase | Tema | Status |
 | --- | --- | --- |
 | 0 | Fundação e spikes de risco | Concluída |
-| 1 | CI/CD no GitHub | Não iniciada |
+| 1 | CI/CD no GitHub | Em andamento |
 | 2 | Esqueleto do app e design system | Não iniciada |
 | 3 | Fila de jobs e upload | Não iniciada |
 | 4 | Transcrição de arquivos (MVP) | Não iniciada |

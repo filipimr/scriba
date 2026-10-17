@@ -1,0 +1,15 @@
+# O whisper usa todos os núcleos; em paralelo os testes disputam a CPU (spike A: 3 testes
+# base levaram 498 s). Testes que transcrevem rodam um por vez.
+[test-groups]
+whisper = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = "binary(spike_a_whisper) | binary(self_test)"
+test-group = "whisper"
+
+[profile.ci]
+fail-fast = false
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[profile.ci.junit]
+path = "junit.xml"

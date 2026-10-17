@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
+  pull_request:
+    paths-ignore: ["**.md", "docs/**"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: windows-latest
+    # A 1ª execução compila o FFmpeg (~1 h); depois vem do cache.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-native
+        with:
+          tools: cargo-nextest,cargo-llvm-cov
+
+      - name: fmt
+        run: cargo fmt --all --check
+
+      # Sem a feature vulkan: o runner não tem Vulkan SDK nem GPU.
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Testes (unit + integração) com cobertura
+        run: >
+          cargo llvm-cov nextest --workspace --profile ci
+          --ignore-filename-regex "crates[/\\\\]spikes|xtask"
+          --fail-under-lines 70
+          --lcov --output-path lcov.info
+
+      - name: Relatório de testes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testes
+          path: |
+            C:\t\nextest\ci\junit.xml
+            lcov.info
+          if-no-files-found: ignore
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      # Os testes de tela chegam na Fase 2; por ora o job prova que o Playwright roda.
+      - name: E2E (Playwright)
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright test
+
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources
