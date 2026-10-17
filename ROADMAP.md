@@ -277,6 +277,11 @@ Base no PRD: Sprint 3.1 e Sprint 4. Objetivo: qualquer áudio ou vídeo vira tex
   - Idioma `pt`, VAD Silero e `no_context`.
   - Threads = núcleos − 2.
   - Progresso, cancelamento e filtro de frases-fantasma.
+- [ ] Escolha do backend (achado do spike A: só CPU com o modelo grande leva ~8 h para 1 h de áudio):
+  - Usar a GPU **dedicada** quando houver, e não o dispositivo Vulkan 0, que costuma ser a integrada. Se não houver dedicada, usar a integrada.
+  - Sem GPU Vulkan, transcrever na CPU com um **modelo menor embutido**. A escolha entre `small` e `base` sai de um benchmark de precisão × tempo nas fixtures. O custo é o exe crescer ~60–190 MB.
+  - Antes de fechar o fallback, investigar a lentidão da CPU (~87 s para 10,9 s), comparando com o whisper.cpp oficial e testando threads e OpenMP.
+  - Mostrar na UI qual backend está em uso e uma estimativa de tempo antes de começar.
 - [ ] `transcript`: parágrafos (pausa > 1,5 s quebra), `[hh:mm:ss]` em cada parágrafo e cabeçalho (origem, data, duração). Gera `transcricao.txt` e `job.json`.
 - [ ] UI: leitor da transcrição, Copiar texto, Baixar .txt e Abrir pasta.
 
@@ -289,12 +294,14 @@ Base no PRD: Sprint 3.1 e Sprint 4. Objetivo: qualquer áudio ou vídeo vira tex
   - Cancelar no meio interrompe a transcrição.
   - Arquivo sem áudio → erro amigável.
 - [ ] E2E: upload → texto visível → copiar → .txt baixado com o conteúdo certo.
-- [ ] Local: caminho Vulkan e benchmark com 1 h de áudio.
+- [ ] Unitário: a escolha do backend prefere GPU dedicada, depois integrada, depois CPU com o modelo menor (com uma lista de dispositivos falsa).
+- [ ] Local: benchmark com 1 h de áudio real em cada backend (RTX, Intel integrada e só CPU).
 
 **Pronto quando:**
 
 - [ ] Arquivos reais (MP4 do Teams, MP3, M4A, WAV, OGG) viram texto pt-BR correto.
 - [ ] O tempo para transcrever 1 h de áudio na RTX 3050 está registrado.
+- [ ] Metas para 1 h de áudio: ≤ 10 min na RTX 3050 e ≤ 1 h só na CPU (com o modelo menor). Os tempos medidos nos três backends ficam no registro de decisões.
 
 ### Fase 5 — Gravação ao vivo
 
@@ -442,6 +449,7 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-16 | Fase 0 | Medições: FFmpeg estático compila em 20,7 min (`static-md`) e 11,7 min (`static`, com cache do x264). Exe com modelo embutido: 604 MB; o modelo (574 MB) carrega da memória em ~2,8 s; rebuild só do crate do modelo, 19 s | Spike D |
 | 2026-10-16 | Fase 0 | Medições, large-v3-turbo q5_0, fixture de 10,9 s (release): RTX 3050 via Vulkan ~0,9 s (~12× tempo real); a 1ª execução compila os shaders e leva ~11 s. Intel integrada ~15 s. CPU com 18 threads ~87 s (0,13× tempo real), escalando com as threads | Spike A |
 | 2026-10-16 | Fase 0 | Achados para a Fase 4: (1) o Vulkan enumera a GPU integrada como dispositivo 0, então o app precisa escolher a GPU dedicada (tipo discreto); (2) o fallback de CPU com o modelo grande é inviável para áudios longos: investigar threads/OpenMP ou usar modelo menor sem GPU; (3) whisper em testes paralelos disputa a CPU (3 testes base: 498 s), então os testes de whisper devem rodar em série no CI; (4) o silêncio puro gera "[MÚSICA DE FUNDO]" sem VAD | Spike A |
+| 2026-10-16 | Fase 0 | Política de backend da Fase 4: GPU dedicada → GPU integrada → CPU com modelo menor embutido (`small` ou `base`, por benchmark). Metas para 1 h de áudio: ≤ 10 min na RTX 3050 e ≤ 1 h na CPU | Estimativa linear do spike A: 1 h de áudio levaria ~5 min na RTX, ~80 min na integrada e ~8 h na CPU com o modelo grande |
 | 2026-10-16 | Fase 0 | Medições: extração de áudio de MP4/MP3/M4A/OGG dá 10,93 s, igual ao WAV; x264 e NVENC codificam 2 s de vídeo; o exe de teste não lista DLLs do FFmpeg | Spike B |
 | 2026-10-16 | Fase 0 | Medições: mic 29,930 s e loopback 30,010 s em 30 s sem som no PC (diferença de 80 ms, limite de 100 ms), com o stream de silêncio na saída. WASAPI compartilhado entrega f32 48 kHz estéreo | Spike C. A folga é pequena: o alinhamento por timestamp da Fase 5 é necessário |
 
