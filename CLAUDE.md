@@ -4,7 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Planning stage. There is no source code, package manifest, build step, linter, or test suite yet, so no build, lint, or test commands exist. Do not invent them; document the real commands here as each phase adds them.
+Phase 0 (foundation and risk spikes) is done. The workspace has a placeholder `scriba` binary (`src/main.rs`), `crates/scriba-model` (model embedded via `include_bytes!` behind the `embedded-model` feature), `crates/spikes` (the Phase 0 spikes as tests), and `xtask`. No app features exist yet. Document new commands here as each phase adds them.
+
+## Environment and commands
+
+- One-time setup, in an admin PowerShell: `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1`. It is idempotent; `-LimparVcpkg` deletes vcpkg temp files. It installs the toolchain and sets the user variables `VCPKG_ROOT=C:\dev\vcpkg`, `LIBCLANG_PATH`, and `CARGO_TARGET_DIR=C:\dev\t\scriba`. The short target dir is required: inside the repo, the whisper.cpp Vulkan build exceeds MAX_PATH.
+- Static FFmpeg (once, ~12–20 min, then cached): `C:\dev\vcpkg\vcpkg.exe install --triplet x64-windows-static --x-install-root=vcpkg_installed`. In manifest mode, installing another triplet replaces `vcpkg_installed/`.
+- `.cargo/config.toml` holds the build env: triplet `x64-windows-static`, `+crt-static`, `FFMPEG_DIR`, the whisper.cpp `GGML_*` SIMD baseline, and `CMAKE_MSVC_RUNTIME_LIBRARY`. Changing `GGML_*`/`CMAKE_*` needs `cargo clean -p whisper-rs-sys`, because the build script does not track them.
+- `cargo xtask model` downloads the models to `models/` and checks SHA-256. `cargo xtask fixtures` regenerates `tests/fixtures/`; it needs the "Microsoft Maria" SAPI voice and the `ffmpeg` CLI.
+- Lint: `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --features spikes/vulkan -- -D warnings`.
+- Tests: `cargo test --workspace --features spikes/vulkan`. Hardware tests (GPU, NVENC, real audio devices, large model) are `#[ignore = "hardware"]`; run them locally with `cargo test -p spikes --features vulkan -- --ignored`. Measure whisper speed only in `--release`.
+- Spike D binary: `cargo build --release -p spikes --features "vulkan embedded-model" --bin exe_unico`.
 
 - `ROADMAP.md` (pt-BR) is the project plan. It covers:
   - product decisions;

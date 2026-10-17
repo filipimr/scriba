@@ -1,12 +1,17 @@
 [alias]
 xtask = "run --package xtask --"
 
+# CRT estático: o exe não depende do VC++ Redistributable (spike D).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
 [env]
-# FFmpeg estático do vcpkg (modo manifesto, instalado em vcpkg_installed/).
-VCPKGRS_TRIPLET = "x64-windows-static-md"
+# FFmpeg estático do vcpkg com CRT estático (modo manifesto, em vcpkg_installed/).
+# Instalar: vcpkg install --triplet x64-windows-static --x-install-root=vcpkg_installed
+VCPKGRS_TRIPLET = "x64-windows-static"
 VCPKGRS_DYNAMIC = "0"
 VCPKG_INSTALLED_DIR = { value = "vcpkg_installed", relative = true }
-FFMPEG_DIR = { value = "vcpkg_installed/x64-windows-static-md", relative = true }
+FFMPEG_DIR = { value = "vcpkg_installed/x64-windows-static", relative = true }
 LIBCLANG_PATH = "C:\\Program Files\\LLVM\\bin"
 
 # whisper.cpp: com MSVC o GGML_NATIVE não detecta a CPU e compila sem SIMD.
@@ -16,3 +21,7 @@ GGML_AVX = "ON"
 GGML_AVX2 = "ON"
 GGML_FMA = "ON"
 GGML_F16C = "ON"
+# CRT estático também no whisper.cpp em builds debug: o whisper-rs-sys força
+# CMAKE_BUILD_TYPE=Release e o /MT do cmake-rs iria só para as flags de Debug.
+CMAKE_POLICY_DEFAULT_CMP0091 = "NEW"
+CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded"

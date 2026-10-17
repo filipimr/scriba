@@ -103,8 +103,8 @@ fn mic_e_loopback_mesma_duracao() {
         )
         .unwrap();
     // Loopback: stream de entrada aberto no dispositivo de saída.
-    let loopback = input(&out, out_cfg.clone(), sys_tx);
-    let mic_stream = input(&mic, mic_cfg.clone(), mic_tx);
+    let loopback = input(&out, out_cfg, sys_tx);
+    let mic_stream = input(&mic, mic_cfg, mic_tx);
 
     silence.play().unwrap();
     loopback.play().unwrap();

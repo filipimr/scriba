@@ -8,7 +8,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 
 | Fase | Tema | Status |
 | --- | --- | --- |
-| 0 | Fundação e spikes de risco | Em andamento |
+| 0 | Fundação e spikes de risco | Concluída |
 | 1 | CI/CD no GitHub | Não iniciada |
 | 2 | Esqueleto do app e design system | Não iniciada |
 | 3 | Fila de jobs e upload | Não iniciada |
@@ -51,7 +51,8 @@ Levantamento de 2026-10-16 da máquina de desenvolvimento:
 - Windows 11 Pro pt-BR, i7-13650HX (14 núcleos), 16 GB de RAM, RTX 3050 6 GB (drivers Vulkan e CUDA), 220 GB livres em disco.
 - Voz SAPI "Microsoft Maria" (pt-BR), usada para gerar as fixtures de teste.
 - Já instalados: Git, winget e Node.
-- A instalar na Fase 0: Rust, VS Build Tools (C++), LLVM, CMake, vcpkg, FFmpeg e Vulkan SDK.
+- Instalados na Fase 0 por `scripts/setup.ps1`: Rust, VS Build Tools (C++), LLVM, CMake, vcpkg, FFmpeg (CLI, só para fixtures) e Vulkan SDK.
+- GPUs Vulkan: dispositivo 0 = Intel integrada, dispositivo 1 = RTX 3050.
 
 ## Análise do PRD original
 
@@ -157,27 +158,27 @@ Objetivo: provar, antes de qualquer tela, que o build nativo (FFmpeg estático, 
 
 **Entregas:**
 
-- [ ] `scripts/setup.ps1` (idempotente) instala via winget: Rustup (MSVC), VS 2022 Build Tools (C++), LLVM, CMake e Vulkan SDK.
-- [ ] vcpkg com baseline fixado no repositório e FFmpeg estático compilado (~30–60 min).
-- [ ] Variáveis de ambiente do build em `.cargo/config.toml [env]`.
-- [ ] `git init`, workspace Cargo e `rust-toolchain.toml`.
-- [ ] `cargo xtask model`: baixa os modelos e confere o SHA-256.
-- [ ] `cargo xtask fixtures`: gera as fixtures de fala pt-BR com a voz Maria.
-- [ ] **Spike A, whisper:** transcrever uma fixture pt-BR. Medir CPU contra Vulkan e testar `new_from_buffer_with_params`.
-- [ ] **Spike B, FFmpeg:** extrair o áudio de um MP4 para 16 kHz mono e codificar H.264 com x264 e com NVENC. `dumpbin /dependents` não deve listar DLLs do FFmpeg.
-- [ ] **Spike C, captura:** gravar 30 s de mic + loopback, com 10 s de silêncio no meio. Os dois WAVs devem ter a mesma duração (±100 ms).
-- [ ] **Spike D, exe único:** crate do modelo com `include_bytes!`. Medir build, tamanho e carga. Tentar CRT estático.
+- [x] `scripts/setup.ps1` (idempotente) instala via winget: Rustup (MSVC), VS 2022 Build Tools (C++), LLVM, CMake e Vulkan SDK.
+- [x] vcpkg com baseline fixado no repositório e FFmpeg estático compilado (~30–60 min).
+- [x] Variáveis de ambiente do build em `.cargo/config.toml [env]`.
+- [x] `git init`, workspace Cargo e `rust-toolchain.toml`.
+- [x] `cargo xtask model`: baixa os modelos e confere o SHA-256.
+- [x] `cargo xtask fixtures`: gera as fixtures de fala pt-BR com a voz Maria.
+- [x] **Spike A, whisper:** transcrever uma fixture pt-BR. Medir CPU contra Vulkan e testar `new_from_buffer_with_params`.
+- [x] **Spike B, FFmpeg:** extrair o áudio de um MP4 para 16 kHz mono e codificar H.264 com x264 e com NVENC. `dumpbin /dependents` não deve listar DLLs do FFmpeg.
+- [x] **Spike C, captura:** gravar 30 s de mic + loopback, com 10 s de silêncio no meio. Os dois WAVs devem ter a mesma duração (±100 ms).
+- [x] **Spike D, exe único:** crate do modelo com `include_bytes!`. Medir build, tamanho e carga. Tentar CRT estático.
 
 **Testes:**
 
-- [ ] Cada spike vira um teste de integração. Os que dependem de hardware entram na suíte local.
+- [x] Cada spike vira um teste de integração. Os que dependem de hardware entram na suíte local.
 
 **Pronto quando:**
 
-- [ ] Os 4 spikes passam nesta máquina.
-- [ ] As versões fixadas e as decisões estão no [Registro de decisões](#registro-de-decisões).
+- [x] Os 4 spikes passam nesta máquina.
+- [x] As versões fixadas e as decisões estão no [Registro de decisões](#registro-de-decisões).
 
-Observação: as instalações pedem confirmação de administrador (UAC). São ~2–3 GB de ferramentas, mais ~0,6 GB de modelos.
+Observação: as instalações pedem confirmação de administrador (UAC). Na prática foram ~15–25 GB entre ferramentas, FFmpeg compilado, modelos (~0,6 GB) e builds; `setup.ps1 -LimparVcpkg` apaga os temporários do vcpkg.
 
 ### Fase 1 — CI/CD no GitHub
 
@@ -406,7 +407,7 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | Testes E2E instáveis | Porta 0 e diretórios temporários por teste. Esperar eventos do HTMX em vez de `sleep`. Retry só no CI, com relatório |
 | `ffmpeg-next` está em modo manutenção | Fixar a 9.x junto com o FFmpeg 9 do vcpkg. Alternativa: `rsmpeg` |
 | `include_bytes!` de ~0,6 GB deixa o build lento | Crate separado, compilado só no release. Plano B: modelo anexado ao fim do exe e lido via mmap |
-| O exe não abre em máquina sem Vulkan | `--self-test` no runner e no Sandbox. Plano B: variante `scriba-cpu.exe` |
+| O exe não abre em máquina sem Vulkan | Confirmado na Fase 0: o exe importa `vulkan-1.dll` diretamente. `--self-test` no runner e no Sandbox. Plano B: carregar o Vulkan com delay-load ou variante `scriba-cpu.exe` |
 | Loopback mudo no silêncio ou deriva de relógio | Silêncio tocando na saída, alinhamento por timestamp e testes de lacuna |
 | Eco (sem fone de ouvido) duplica falas | Dedupe por sobreposição e similaridade, mais uma dica na UI |
 | Site malicioso liga o microfone | Token, SameSite=Strict, Host/Origin e bind em 127.0.0.1, todos com testes de 401/403 |
@@ -432,7 +433,17 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-16 | Planejamento | CI/CD no GitHub Actions e testes automatizados obrigatórios | O código será hospedado no GitHub; Definition of Done |
 | 2026-10-16 | Planejamento | `DESIGN-scriba.md` reescrito como design system de app: Inter embutida, componentes do Scriba, cores de status como exceção ao acento único, marca monocromática | O arquivo original descrevia o site de marketing da Apple; o logo define uma marca preto e branco em traço fino |
 | 2026-10-16 | Planejamento | Temas claro e escuro, alternáveis no header; padrão segue o Windows | Pedido do usuário; tokens `themes.dark` no `DESIGN-scriba.md` |
-| — | Fase 0 | A preencher: versões fixadas, triplet e CRT, tempos medidos (CPU × Vulkan), tamanho do exe | Resultados dos spikes |
+| 2026-10-16 | Fase 0 | Versões fixadas: Rust 1.99.1 (`rust-toolchain.toml`), vcpkg baseline `7d5f3c6` com FFmpeg 9.0.2, `whisper-rs` 0.16.0 (`whisper-rs-sys` 0.15.0), `ffmpeg-next` 9.0.0, `cpal` 0.18.2, `hound` 3.5.1. Ferramentas: VS 2022 Build Tools 17.14, LLVM 23.1.3, CMake 4.4.4, Vulkan SDK 1.4.363.0 | Reprodutibilidade do build |
+| 2026-10-16 | Fase 0 | Triplet `x64-windows-static` + `+crt-static` (também `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` para o whisper.cpp). O exe depende só de DLLs do Windows e de `vulkan-1.dll` | Spike D: com `static-md` o exe exigia o VC++ Redistributable |
+| 2026-10-16 | Fase 0 | `build.rs` declara as libs de link do FFmpeg estático: `libx264`, `secur32`, `crypt32`, `ncrypt`, `bcrypt`, `ole32`, `user32`, `mfuuid`, `strmiids`, `mfplat` | Com `FFMPEG_DIR`, o `ffmpeg-sys-next` não as declara |
+| 2026-10-16 | Fase 0 | whisper.cpp com `GGML_NATIVE=OFF` e base AVX/AVX2/FMA/F16C | Com MSVC, o `GGML_NATIVE` não detecta a CPU e compila sem SIMD |
+| 2026-10-16 | Fase 0 | `CARGO_TARGET_DIR=C:\dev\t\scriba` e vcpkg em `C:\dev\vcpkg` | O build Vulkan do whisper.cpp estoura MAX_PATH (260) dentro do repositório |
+| 2026-10-16 | Fase 0 | Spikes em `crates/spikes` (testes de hardware com `#[ignore = "hardware"]`). CLI do FFmpeg (`Gyan.FFmpeg.Essentials`) só para gerar fixtures | Mantém o app limpo e o FFmpeg embutido enxuto |
+| 2026-10-16 | Fase 0 | Medições: FFmpeg estático compila em 20,7 min (`static-md`) e 11,7 min (`static`, com cache do x264). Exe com modelo embutido: 604 MB; o modelo (574 MB) carrega da memória em ~2,8 s; rebuild só do crate do modelo, 19 s | Spike D |
+| 2026-10-16 | Fase 0 | Medições, large-v3-turbo q5_0, fixture de 10,9 s (release): RTX 3050 via Vulkan ~0,9 s (~12× tempo real); a 1ª execução compila os shaders e leva ~11 s. Intel integrada ~15 s. CPU com 18 threads ~87 s (0,13× tempo real), escalando com as threads | Spike A |
+| 2026-10-16 | Fase 0 | Achados para a Fase 4: (1) o Vulkan enumera a GPU integrada como dispositivo 0, então o app precisa escolher a GPU dedicada (tipo discreto); (2) o fallback de CPU com o modelo grande é inviável para áudios longos: investigar threads/OpenMP ou usar modelo menor sem GPU; (3) whisper em testes paralelos disputa a CPU (3 testes base: 498 s), então os testes de whisper devem rodar em série no CI; (4) o silêncio puro gera "[MÚSICA DE FUNDO]" sem VAD | Spike A |
+| 2026-10-16 | Fase 0 | Medições: extração de áudio de MP4/MP3/M4A/OGG dá 10,93 s, igual ao WAV; x264 e NVENC codificam 2 s de vídeo; o exe de teste não lista DLLs do FFmpeg | Spike B |
+| 2026-10-16 | Fase 0 | Medições: mic 29,930 s e loopback 30,010 s em 30 s sem som no PC (diferença de 80 ms, limite de 100 ms), com o stream de silêncio na saída. WASAPI compartilhado entrega f32 48 kHz estéreo | Spike C. A folga é pequena: o alinhamento por timestamp da Fase 5 é necessário |
 
 ## Referências verificadas
 
