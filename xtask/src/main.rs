@@ -1,3 +1,6 @@
+mod contrast;
+mod css;
+mod design;
 mod fixtures;
 mod models;
 
@@ -22,12 +25,19 @@ enum Cmd {
     },
     /// Gera as fixtures de fala pt-BR em tests/fixtures/ com a voz Maria.
     Fixtures,
+    /// Gera ui/tokens.css do DESIGN-scriba.md e compila assets/app.css com o Tailwind.
+    Css {
+        /// Só confere se os arquivos versionados estão em dia (CI).
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
         Cmd::Model { only } => models::download(&root().join("models"), only.as_deref()),
         Cmd::Fixtures => fixtures::generate(&root().join("tests").join("fixtures")),
+        Cmd::Css { check } => css::run(&root(), check),
     }
 }
 
@@ -37,4 +47,9 @@ fn root() -> PathBuf {
         .parent()
         .expect("xtask fica dentro do workspace")
         .to_path_buf()
+}
+
+#[cfg(test)]
+fn design_source() -> std::io::Result<String> {
+    std::fs::read_to_string(root().join("DESIGN-scriba.md"))
 }

@@ -34,6 +34,9 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: CSS em dia com o DESIGN-scriba.md
+        run: cargo xtask css --check
+
       - name: Testes (unit + integração) com cobertura
         run: >
           cargo llvm-cov nextest --workspace --profile ci
@@ -57,12 +60,25 @@ jobs:
           cache: npm
           cache-dependency-path: e2e/package-lock.json
 
-      # Os testes de tela chegam na Fase 2; por ora o job prova que o Playwright roda.
+      # O E2E sobe o scriba.exe de debug (em CARGO_TARGET_DIR) no Edge do runner.
+      - name: Build do app para o E2E
+        run: cargo build
+
       - name: E2E (Playwright)
         working-directory: e2e
         run: |
           npm ci
           npx playwright test
+
+      - name: Resultados e referências do E2E
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e
+          path: |
+            e2e/test-results
+            e2e/tests/*-snapshots
+          if-no-files-found: ignore
 
   deny:
     runs-on: ubuntu-latest

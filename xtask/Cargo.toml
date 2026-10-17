@@ -11,3 +11,7 @@ clap.workspace = true
 hex.workspace = true
 sha2.workspace = true
 ureq.workspace = true
+serde_yaml_ng.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

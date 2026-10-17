@@ -1,0 +1,38 @@
+name: Referências visuais do E2E
+
+# Regenera as screenshots de referência no mesmo runner do CI e as publica como artefato.
+# Baixe o artefato e commite em e2e/tests/*-snapshots/.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshots:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-native
+
+      - name: Build do app
+        run: cargo build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Gera as referências
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright test --update-snapshots=all
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-snapshots
+          path: e2e/tests/*-snapshots

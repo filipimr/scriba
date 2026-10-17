@@ -355,7 +355,7 @@ A marca é monocromática. O logo é preto e branco, desenhado em traço fino de
 
 ## Marca e logo
 
-O arquivo de origem está em `docs/brand/logo-original.jpg`. A versão vetorial (SVG) é entregue na Fase 2 do roadmap.
+O arquivo de origem está em `docs/brand/logo-original.jpg`. As versões vetoriais ficam em `docs/brand/`: `logo.svg` (quadrado preto, caneta branca), `logo-white.svg` (quadrado branco, caneta preta, para fundos escuros como o header), `logo-mark.svg` (só o traço, em `currentColor`) e `logo-16.svg` (versão simplificada para favicon e bandeja).
 
 - **Ícone do app:** quadrado preto (`{colors.brand-ink}`) com cantos `{rounded.icon}` (~22%) e caneta-tinteiro em traço branco, ligada a uma linha de assinatura com laço.
 - **Wordmark:** "Scriba" em Inter 600, tracking −0,02em, ao lado do ícone, na cor do texto da superfície (branco no header, `{colors.ink}` no claro).
@@ -674,6 +674,6 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 ## Lacunas conhecidas
 
-- **Logo vetorial:** o SVG final e a versão simplificada de 16 px saem na Fase 2.
+- **Logo vetorial:** resolvido na Fase 2 (SVGs em `docs/brand/`). Falta o `.ico` do executável e da bandeja, que sai na Fase 7 junto com o ícone da bandeja.
 - **Ilustrações de estado vazio:** a v1 usa apenas ícones Lucide.
 - **Ícone da bandeja do Windows:** precisa de variantes clara e escura, conforme o tema da barra de tarefas.

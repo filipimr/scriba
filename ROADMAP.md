@@ -10,7 +10,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | --- | --- | --- |
 | 0 | Fundação e spikes de risco | Concluída |
 | 1 | CI/CD no GitHub | Concluída |
-| 2 | Esqueleto do app e design system | Não iniciada |
+| 2 | Esqueleto do app e design system | Em andamento |
 | 3 | Fila de jobs e upload | Não iniciada |
 | 4 | Transcrição de arquivos (MVP) | Não iniciada |
 | 5 | Gravação ao vivo | Não iniciada |
@@ -218,28 +218,28 @@ Base no PRD: Sprint 1. Objetivo: o exe sobe o servidor local seguro e abre no na
 
 **Entregas:**
 
-- [ ] Axum em 127.0.0.1 (porta preferida e fallback), com encerramento limpo.
-- [ ] Middleware de segurança: token na URL → cookie SameSite=Strict; validação de Host e Origin.
-- [ ] Assets embutidos (CSS, htmx, Inter, ícones) com cache.
-- [ ] Layout askama (global-nav, tiles, footer) seguindo o `DESIGN-scriba.md`.
-- [ ] Logo vetorizado a partir de `docs/brand/logo-original.jpg`: SVG do ícone, versão branca e versão simplificada de 16 px (favicon e bandeja).
-- [ ] `cargo xtask css`: gera os tokens a partir do YAML (tema claro em `:root`, escuro em `[data-theme="dark"]` e em `prefers-color-scheme`) e compila o Tailwind.
-- [ ] Alternância de tema no header (Sistema → Claro → Escuro), salva na configuração e renderizada pelo servidor no `<html>`, sem piscar.
-- [ ] Instância única via `instance.json`.
-- [ ] Flags `--no-open`, `--port`, `--data-dir` e `--output-dir`.
+- [x] Axum em 127.0.0.1 (porta preferida e fallback), com encerramento limpo.
+- [x] Middleware de segurança: token na URL → cookie SameSite=Strict; validação de Host e Origin.
+- [x] Assets embutidos (CSS, htmx, Inter, ícones) com cache.
+- [x] Layout askama (`app-header`, painel de gravação e dropzone, "Recentes", `footer`) seguindo o `DESIGN-scriba.md`.
+- [x] Logo vetorizado a partir de `docs/brand/logo-original.jpg`: SVG do ícone, versão branca e versão simplificada de 16 px (favicon e bandeja).
+- [x] `cargo xtask css`: gera os tokens a partir do YAML (tema claro em `:root`, escuro em `[data-theme="dark"]` e em `prefers-color-scheme`) e compila o Tailwind.
+- [x] Alternância de tema no header (Sistema → Claro → Escuro), salva na configuração e renderizada pelo servidor no `<html>`, sem piscar.
+- [x] Instância única via `instance.json`.
+- [x] Flags `--no-open`, `--port`, `--data-dir` e `--output-dir`.
 
 **Testes:**
 
-- [ ] Unitários: token, Host e Origin; fallback de porta; lockfile; gerador de tokens CSS (snapshot).
-- [ ] Integração: rotas com 200/401/403; content-type e cache dos assets; segunda instância.
+- [x] Unitários: token, Host e Origin; fallback de porta; lockfile; gerador de tokens CSS (snapshot).
+- [x] Integração: rotas com 200/401/403; content-type e cache dos assets; segunda instância.
 - [ ] E2E: a página carrega e bate com a referência visual nos dois temas; a alternância de tema persiste após recarregar.
-- [ ] Unitário: contraste AA de todo par texto/fundo dos componentes, nos dois temas, calculado a partir do YAML.
+- [x] Unitário: contraste AA de todo par texto/fundo dos componentes, nos dois temas, calculado a partir do YAML.
 
 **Pronto quando:**
 
-- [ ] `cargo run` abre a tela fiel ao design.
-- [ ] Requisição sem token retorna 401, e Host estranho retorna 403.
-- [ ] A segunda execução reaproveita a instância aberta.
+- [x] `cargo run` abre a tela fiel ao design.
+- [x] Requisição sem token retorna 401, e Host estranho retorna 403.
+- [x] A segunda execução reaproveita a instância aberta.
 
 ### Fase 3 — Fila de jobs e upload
 
@@ -459,6 +459,15 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-17 | Fase 1 | CI roda em todo PR (sem `paths-ignore`); só o push na `main` ignora `.md` e `docs/` | Com checks obrigatórios, um PR só de documentação nunca receberia os checks e ficaria bloqueado |
 | 2026-10-17 | Fase 1 | E2E: projeto Playwright em `e2e/` com um teste pulado até a Fase 2 trazer o servidor | O job já existe e roda no CI |
 | 2026-10-17 | Fase 1 | Medições no runner windows-latest: sem cache do FFmpeg, 34–36 min (compilação do FFmpeg ~30 min, abaixo da estimativa de 1 h); com cache, `checks` 3 min 48 s e `deny` ~40 s; release sem cache 33 min; o self-test transcreve os 10,9 s da amostra em 48 s em CPU | O cache é por ref: PRs leem o da `main`, aquecido a cada push nela |
+| 2026-10-17 | Fase 2 | Versões: `axum` 0.8.9, `askama` 0.16.1, `tokio` 1.53, htmx 2.0.11, Tailwind CLI standalone 4.3.3 (SHA-256 fixado no xtask), Inter 4.1 (variável, woff2), Lucide 1.59.0 (só os ícones usados, inline) | Reprodutibilidade; tudo embutido, sem CDN |
+| 2026-10-17 | Fase 2 | `ui/tokens.css` e `assets/app.css` gerados e **versionados**; o CI só confere com `cargo xtask css --check` | O `cargo build` e o CI não dependem do Tailwind; o diff do CSS aparece no PR |
+| 2026-10-17 | Fase 2 | Tokens no `@theme static` do Tailwind (todas as cores viram `--color-*`, usadas ou não); escuro em `[data-theme="dark"]` e em `prefers-color-scheme` para `:root:not([data-theme="light"])` | Bate com o "Como funciona" do design; o servidor renderiza o `data-theme`, sem piscar |
+| 2026-10-17 | Fase 2 | Porta preferida 47800, com fallback para porta livre. Token de 32 bytes na URL (`?t=`) → cookie `HttpOnly; SameSite=Strict` + redirect; Host precisa ser `127.0.0.1`/`localhost` na porta; Origin obrigatório e igual em métodos não-GET; CSP `default-src 'self'` | Segurança do servidor local (CSRF e DNS rebinding) |
+| 2026-10-17 | Fase 2 | Instância única: `instance.json` {id, porta, token} + `GET /health` (sem token, devolve só o id). A 2ª execução reabre o navegador na instância viva e sai | Dispensa checar PID; arquivo velho ou porta reaproveitada por outro programa não enganam |
+| 2026-10-17 | Fase 2 | Favicon em SVG (`logo-16.svg`); o `.ico` fica para a Fase 7 (exe e bandeja). No header, `logo-white.svg` (quadrado branco, caneta preta) com traço mais grosso, legível a 24 px | Navegadores atuais aceitam favicon SVG |
+| 2026-10-17 | Fase 2 | Abas "Arquivos"/"Gravar" e "Sair" do header ainda não existem: chegam com as telas (Fases 3–5) e a bandeja (Fase 7). Dropzone e botão de gravar aparecem desabilitados | Sem funcionalidade por trás nesta fase |
+| 2026-10-17 | Fase 2 | E2E no Edge instalado (`channel: "msedge"`), sem baixar navegador. Referência visual gerada no runner: no CI, referência ausente é gravada (`updateSnapshots: "missing"`) e publicada como artefato; o workflow manual `e2e-snapshots.yml` regenera todas. Localmente a comparação visual é pulada | Renderização local e do runner diferem (fontes, DPI) |
+| 2026-10-17 | Fase 2 | `about.hbs` credita os assets que não são crates: Inter (OFL 1.1), htmx (0BSD), Lucide (ISC), Tailwind (MIT) | O `cargo about` só enxerga crates |
 
 ## Referências verificadas
 

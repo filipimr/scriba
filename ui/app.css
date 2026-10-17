@@ -1,0 +1,158 @@
+/* Fonte do CSS do Scriba. `cargo xtask css` compila para assets/app.css.
+   Tokens em tokens.css (gerado do DESIGN-scriba.md); componentes abaixo, por nome do design. */
+@import "tailwindcss" source(none);
+@import "./tokens.css";
+@source "../templates";
+
+@font-face {
+  font-family: "Inter";
+  src: url("/assets/vendor/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  html {
+    background: var(--color-canvas-parchment);
+  }
+  body {
+    @apply font-sans text-body text-ink antialiased;
+    background: var(--color-canvas-parchment);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-primary-focus);
+    outline-offset: 2px;
+  }
+  .lucide {
+    width: 24px;
+    height: 24px;
+    stroke-width: 1.75;
+    flex: none;
+  }
+  .lucide.icon-20 {
+    width: 20px;
+    height: 20px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+}
+
+@layer components {
+  .app-header {
+    @apply sticky top-0 z-10 text-caption;
+    height: 52px;
+    background: var(--color-surface-black);
+    color: var(--color-on-dark);
+  }
+  .wordmark {
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .theme-toggle {
+    @apply inline-flex items-center justify-center rounded-pill;
+    width: 44px;
+    height: 44px;
+    color: var(--color-on-dark-secondary);
+    transition: transform var(--motion-duration-fast) var(--motion-easing);
+  }
+  .theme-toggle:active,
+  .btn:active:not(:disabled) {
+    transform: scale(var(--motion-press-scale));
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-xs rounded-pill text-body;
+    padding: 11px 22px;
+    min-height: 44px;
+    transition: transform var(--motion-duration-fast) var(--motion-easing);
+  }
+  .btn-primary {
+    background: var(--color-primary);
+    color: var(--color-on-primary);
+  }
+  .btn-primary:disabled {
+    background: var(--color-divider-soft);
+    color: var(--color-ink-tertiary);
+    cursor: not-allowed;
+  }
+
+  .dropzone {
+    @apply flex flex-col items-center justify-center gap-md rounded-lg text-center;
+    padding: var(--spacing-xxl);
+    background: var(--color-canvas);
+    color: var(--color-ink-secondary);
+    border: 1.5px dashed var(--color-hairline);
+  }
+  .dropzone-title {
+    @apply text-headline;
+  }
+
+  .option-toggle {
+    @apply inline-flex items-center gap-xs rounded-pill text-callout;
+    padding: 10px 16px;
+    min-height: 44px;
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    border: 1px solid var(--color-hairline);
+  }
+
+  .record-panel {
+    @apply flex flex-col items-center justify-center gap-md rounded-lg text-center;
+    padding: var(--spacing-xxl);
+    background: var(--color-surface-dark);
+    color: var(--color-on-dark);
+  }
+  .record-button {
+    @apply inline-flex items-center justify-center rounded-pill;
+    width: 72px;
+    height: 72px;
+    background: var(--color-canvas);
+  }
+  .record-button::before {
+    content: "";
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-pill);
+    background: var(--color-recording);
+  }
+  .record-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .record-timer {
+    @apply text-title tabular-nums;
+  }
+  .record-hint {
+    @apply text-footnote;
+    color: var(--color-on-dark-secondary);
+  }
+
+  .empty-state {
+    @apply flex flex-col items-center gap-sm text-center text-callout;
+    padding: var(--spacing-section);
+    color: var(--color-ink-secondary);
+  }
+
+  .footer {
+    @apply text-footnote;
+    padding: var(--spacing-xl);
+    background: var(--color-canvas-parchment);
+    color: var(--color-ink-secondary);
+  }
+
+  .container-page {
+    @apply mx-auto w-full;
+    max-width: 980px;
+    padding-inline: var(--spacing-md);
+  }
+}
