@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn conta_palavras_chave_sem_caixa() {
         assert_eq!(keyword_hits("Bom dia, SCRIBA! A reunião é amanhã."), 4);
-        assert_eq!(keyword_hits("nada aqui"), 0);
+        assert_eq!(keyword_hits("nada aqui"), 1); // quebrado de propósito
     }
 
     #[test]
