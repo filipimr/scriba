@@ -468,7 +468,7 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-17 | Fase 2 | Abas "Arquivos"/"Gravar" e "Sair" do header ainda não existem: chegam com as telas (Fases 3–5) e a bandeja (Fase 7). Dropzone e botão de gravar aparecem desabilitados | Sem funcionalidade por trás nesta fase |
 | 2026-10-17 | Fase 2 | E2E no Edge instalado (`channel: "msedge"`), sem baixar navegador. Referência visual gerada no runner e versionada em `e2e/tests/tela.spec.ts-snapshots/`: o workflow manual `e2e-snapshots.yml` (ou um run que falhe) publica as imagens como artefato para commit. Localmente a comparação visual é pulada | Renderização local e do runner diferem (fontes, DPI) |
 | 2026-10-17 | Fase 2 | `about.hbs` credita os assets que não são crates: Inter (OFL 1.1), htmx (0BSD), Lucide (ISC), Tailwind (MIT) | O `cargo about` só enxerga crates |
-| 2026-10-17 | Fase 2 | Medição: job `checks` com cache em ~7 min 20 s (antes ~3 min 50 s); a diferença é o `cargo build` de debug para o E2E, separado do build instrumentado da cobertura | Ainda bem abaixo da meta de 20 min |
+| 2026-10-17 | Fase 2 | Medição: job `checks` com cache em ~7–9 min (7 min 20 s e 8 min 41 s nas duas execuções do PR; antes ~3 min 50 s); a diferença é o `cargo build` de debug para o E2E, separado do build instrumentado da cobertura | Ainda bem abaixo da meta de 20 min |
 
 ## Referências verificadas
 
