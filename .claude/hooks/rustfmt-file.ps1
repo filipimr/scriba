@@ -6,7 +6,7 @@ if (-not $file -or $file -notmatch '\.rs$') { exit 0 }
 if (-not (Get-Command rustfmt -ErrorAction SilentlyContinue)) { exit 0 }
 if (-not (Test-Path $file)) { exit 0 }
 
-$out = & rustfmt --edition 2021 $file 2>&1
+$out = & rustfmt --edition 2024 $file 2>&1
 if ($LASTEXITCODE -ne 0) {
     # Erro de sintaxe: devolve ao Claude para corrigir.
     [Console]::Error.WriteLine("rustfmt falhou em ${file}:`n$out")
