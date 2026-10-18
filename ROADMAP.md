@@ -11,7 +11,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | 0 | Fundação e spikes de risco | Concluída |
 | 1 | CI/CD no GitHub | Concluída |
 | 2 | Esqueleto do app e design system | Concluída |
-| 3 | Fila de jobs e upload | Não iniciada |
+| 3 | Fila de jobs e upload | Em andamento |
 | 4 | Transcrição de arquivos (MVP) | Não iniciada |
 | 5 | Gravação ao vivo | Não iniciada |
 | 6 | Compactação de vídeo e áudio | Não iniciada |

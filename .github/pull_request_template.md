@@ -7,5 +7,5 @@
 - [ ] Testes automatizados no nível certo (unitário, integração, E2E).
 - [ ] Bug corrigido ganhou teste de regressão.
 - [ ] Mudança que depende de hardware (GPU, áudio real) rodou na suíte local (`-- --ignored`).
-- [ ] `ROADMAP.md` e `CLAUDE.md` atualizados, se a mudança afeta plano, decisões ou comandos.
+- [ ] `ROADMAP.md`, `CLAUDE.md` e `README.md` atualizados, se a mudança afeta plano, decisões, comandos ou o que o app faz.
 - [ ] CI verde.
