@@ -15,9 +15,6 @@ export default defineConfig({
     channel: "msedge",
     viewport: { width: 1280, height: 900 },
   },
-  // No CI, uma referência ausente é gravada (e publicada como artefato para commit) em vez
-  // de falhar; o workflow e2e-snapshots regenera todas.
-  updateSnapshots: process.env.CI ? "missing" : "none",
   expect: {
     toHaveScreenshot: { maxDiffPixelRatio: 0.01 },
   },

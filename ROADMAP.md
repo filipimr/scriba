@@ -10,7 +10,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | --- | --- | --- |
 | 0 | Fundação e spikes de risco | Concluída |
 | 1 | CI/CD no GitHub | Concluída |
-| 2 | Esqueleto do app e design system | Em andamento |
+| 2 | Esqueleto do app e design system | Concluída |
 | 3 | Fila de jobs e upload | Não iniciada |
 | 4 | Transcrição de arquivos (MVP) | Não iniciada |
 | 5 | Gravação ao vivo | Não iniciada |
@@ -232,7 +232,7 @@ Base no PRD: Sprint 1. Objetivo: o exe sobe o servidor local seguro e abre no na
 
 - [x] Unitários: token, Host e Origin; fallback de porta; lockfile; gerador de tokens CSS (snapshot).
 - [x] Integração: rotas com 200/401/403; content-type e cache dos assets; segunda instância.
-- [ ] E2E: a página carrega e bate com a referência visual nos dois temas; a alternância de tema persiste após recarregar.
+- [x] E2E: a página carrega e bate com a referência visual nos dois temas; a alternância de tema persiste após recarregar.
 - [x] Unitário: contraste AA de todo par texto/fundo dos componentes, nos dois temas, calculado a partir do YAML.
 
 **Pronto quando:**
@@ -466,8 +466,9 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-17 | Fase 2 | Instância única: `instance.json` {id, porta, token} + `GET /health` (sem token, devolve só o id). A 2ª execução reabre o navegador na instância viva e sai | Dispensa checar PID; arquivo velho ou porta reaproveitada por outro programa não enganam |
 | 2026-10-17 | Fase 2 | Favicon em SVG (`logo-16.svg`); o `.ico` fica para a Fase 7 (exe e bandeja). No header, `logo-white.svg` (quadrado branco, caneta preta) com traço mais grosso, legível a 24 px | Navegadores atuais aceitam favicon SVG |
 | 2026-10-17 | Fase 2 | Abas "Arquivos"/"Gravar" e "Sair" do header ainda não existem: chegam com as telas (Fases 3–5) e a bandeja (Fase 7). Dropzone e botão de gravar aparecem desabilitados | Sem funcionalidade por trás nesta fase |
-| 2026-10-17 | Fase 2 | E2E no Edge instalado (`channel: "msedge"`), sem baixar navegador. Referência visual gerada no runner: no CI, referência ausente é gravada (`updateSnapshots: "missing"`) e publicada como artefato; o workflow manual `e2e-snapshots.yml` regenera todas. Localmente a comparação visual é pulada | Renderização local e do runner diferem (fontes, DPI) |
+| 2026-10-17 | Fase 2 | E2E no Edge instalado (`channel: "msedge"`), sem baixar navegador. Referência visual gerada no runner e versionada em `e2e/tests/tela.spec.ts-snapshots/`: o workflow manual `e2e-snapshots.yml` (ou um run que falhe) publica as imagens como artefato para commit. Localmente a comparação visual é pulada | Renderização local e do runner diferem (fontes, DPI) |
 | 2026-10-17 | Fase 2 | `about.hbs` credita os assets que não são crates: Inter (OFL 1.1), htmx (0BSD), Lucide (ISC), Tailwind (MIT) | O `cargo about` só enxerga crates |
+| 2026-10-17 | Fase 2 | Medição: job `checks` com cache em ~7 min 20 s (antes ~3 min 50 s); a diferença é o `cargo build` de debug para o E2E, separado do build instrumentado da cobertura | Ainda bem abaixo da meta de 20 min |
 
 ## Referências verificadas
 
