@@ -39,29 +39,32 @@ pub fn download(dir: &Path, only: Option<&str>) -> anyhow::Result<()> {
         bail!("nenhum modelo corresponde a {only:?}");
     }
     for m in selected {
-        let path = dir.join(m.file);
-        if path.exists() && sha256_file(&path)? == m.sha256 {
-            println!("ok   {}", m.file);
-            continue;
-        }
-        println!("baix {}", m.file);
-        let tmp = path.with_extension("part");
-        let mut body = ureq::get(m.url).call()?.into_body().into_reader();
-        let mut out = File::create(&tmp)?;
-        io::copy(&mut body, &mut out).with_context(|| format!("baixando {}", m.url))?;
-        out.flush()?;
-        drop(out);
-        let got = sha256_file(&tmp)?;
-        if got != m.sha256 {
-            fs::remove_file(&tmp)?;
-            bail!(
-                "SHA-256 de {} não confere: esperado {}, obtido {got}",
-                m.file,
-                m.sha256
-            );
-        }
-        fs::rename(&tmp, &path)?;
+        fetch(dir, m.file, m.url, m.sha256)?;
     }
+    Ok(())
+}
+
+/// Baixa `url` para `dir/file`, a menos que já exista com o SHA-256 esperado.
+pub fn fetch(dir: &Path, file: &str, url: &str, sha256: &str) -> anyhow::Result<()> {
+    fs::create_dir_all(dir)?;
+    let path = dir.join(file);
+    if path.exists() && sha256_file(&path)? == sha256 {
+        println!("ok   {file}");
+        return Ok(());
+    }
+    println!("baix {file}");
+    let tmp = path.with_extension("part");
+    let mut body = ureq::get(url).call()?.into_body().into_reader();
+    let mut out = File::create(&tmp)?;
+    io::copy(&mut body, &mut out).with_context(|| format!("baixando {url}"))?;
+    out.flush()?;
+    drop(out);
+    let got = sha256_file(&tmp)?;
+    if got != sha256 {
+        fs::remove_file(&tmp)?;
+        bail!("SHA-256 de {file} não confere: esperado {sha256}, obtido {got}");
+    }
+    fs::rename(&tmp, &path)?;
     Ok(())
 }
 

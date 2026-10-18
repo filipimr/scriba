@@ -1,0 +1,9 @@
+<button id="theme-toggle" class="theme-toggle" type="button"
+        hx-post="/api/theme" hx-swap="outerHTML"
+        aria-label="Tema: {{ theme.label() }}" title="Tema: {{ theme.label() }}">
+  {%- match theme -%}
+  {%- when Theme::System -%}{% include "icons/monitor.svg" %}
+  {%- when Theme::Light -%}{% include "icons/sun.svg" %}
+  {%- when Theme::Dark -%}{% include "icons/moon.svg" %}
+  {%- endmatch -%}
+</button>

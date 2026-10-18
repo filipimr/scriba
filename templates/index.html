@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="grid gap-sm lg:grid-cols-2">
+  <section class="record-panel max-md:p-md" aria-labelledby="record-title">
+    <h2 id="record-title" class="sr-only">Gravar</h2>
+    <button class="record-button" type="button" disabled aria-label="Gravar" aria-describedby="record-soon"></button>
+    <span>Gravar</span>
+    <span class="record-timer">00:00:00</span>
+    <p id="record-soon" class="record-hint">A gravação chega em breve. Use fone de ouvido para não duplicar falas.</p>
+  </section>
+
+  <section class="dropzone max-md:p-md" aria-labelledby="drop-title">
+    {% include "icons/upload.svg" %}
+    <h2 id="drop-title" class="dropzone-title">Solte um vídeo ou áudio aqui</h2>
+    <span class="text-caption">ou</span>
+    <button class="btn btn-primary" type="button" disabled>Escolher arquivo</button>
+    <div class="flex flex-wrap justify-center gap-xs">
+      <span class="option-toggle">Transcrever</span>
+      <span class="option-toggle">Compactar</span>
+    </div>
+  </section>
+</div>
+
+<section class="mt-xxl" aria-labelledby="recent-title">
+  <h2 id="recent-title" class="text-headline">Recentes</h2>
+  <div class="empty-state">
+    {% include "icons/inbox.svg" %}
+    <p>Nada por aqui ainda. Grave uma reunião ou envie um arquivo.</p>
+  </div>
+</section>
+{% endblock %}
