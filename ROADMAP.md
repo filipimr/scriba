@@ -12,7 +12,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | 1 | CI/CD no GitHub | Concluída |
 | 2 | Esqueleto do app e design system | Concluída |
 | 3 | Fila de jobs e upload | Concluída |
-| 3.5 | Build nativo mais rápido | Em andamento |
+| 3.5 | Build nativo mais rápido | Concluída |
 | 4 | Transcrição de arquivos (MVP) | Não iniciada |
 | 5 | Gravação ao vivo | Não iniciada |
 | 6 | Compactação de vídeo e áudio | Não iniciada |
@@ -299,7 +299,7 @@ A versão debug, cerca de 38% do passo, nunca é usada: o Rust linka sempre o CR
 
 - [x] O log do vcpkg no CI não tem mais build de debug, e o build frio cai ~40%. Hoje leva de 19 a 30 min, conforme o runner; a estimativa é de 11 a 17 min.
 - [x] O cache do FFmpeg cai de 77 MB para ~40 MB. Medido: 61 MB. A estimativa partia do tamanho em disco, que caiu pela metade (de 428 para 217 MB), mas no cache comprimido as libs debug pesavam menos.
-- [ ] O CI agendado roda na `main` sem erro.
+- [x] O CI agendado roda na `main` sem erro.
 
 ### Fase 4 — Transcrição de arquivos (MVP)
 
@@ -530,6 +530,7 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-19 | Fase 3.5 | Triplet `x64-windows-static-release` como overlay em `triplets/`, declarado no `vcpkg.json` (`vcpkg-configuration.overlay-triplets`), e não o triplet comunitário direto | O CI clona o `master` do vcpkg; a cópia versionada não muda por baixo e entra no hash da chave do cache |
 | 2026-10-19 | Fase 3.5 | CI na `main` toda segunda às 06:00 UTC (`schedule`) e sob demanda (`workflow_dispatch`) | O GitHub apaga um cache sem acesso por 7 dias; o run também pega quebras do runner e avisos novos do RustSec |
 | 2026-10-19 | Fase 3.5 | Medições: localmente o build frio do FFmpeg leva 8,0 min (x264 1,1 min, FFmpeg 6,4 min) e o `vcpkg_installed` cai de 428 para 217 MB; o exe de release segue com 85 MB, o `--self-test` passa e o `dumpbin` só lista DLLs do Windows. No CI do PR, `setup-native` frio em 16,3 min (antes 29,5 min num runner de velocidade parecida, −45%), com FFmpeg em 12 min e x264 em 2,4 min; job `checks` em 25,6 min; cache do FFmpeg de 77 para 61 MB. O único build de debug que sobra é o do `pkgconf` do host (15 s) | Critério da Fase 3.5 |
+| 2026-10-19 | Fase 3.5 | Medições na `main`: o push do merge refez o build frio (FFmpeg 12 min, x264 2,4 min; `checks` em 26 min) e o run por `workflow_dispatch`, o mesmo workflow do agendado, passou em 8 min com o cache | Custo único previsto: um build frio na branch e outro na `main` |
 
 ## Referências verificadas
 
