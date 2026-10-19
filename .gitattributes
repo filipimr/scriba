@@ -1,0 +1,3 @@
+# Texto sempre com LF, em qualquer máquina. Templates, ícones e assets são embutidos no exe e
+# comparados em snapshots; o checkout do Windows (core.autocrlf no runner) os trocaria por CRLF.
+* text=auto eol=lf
