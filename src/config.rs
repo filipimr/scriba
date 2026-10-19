@@ -38,6 +38,11 @@ impl Paths {
     pub fn instance_file(&self) -> PathBuf {
         self.data_dir.join("instance.json")
     }
+
+    /// Cópias dos arquivos enviados, enquanto os jobs não terminam.
+    pub fn uploads_dir(&self) -> PathBuf {
+        self.data_dir.join("uploads")
+    }
 }
 
 /// Modo de tema escolhido no header. `System` segue o Windows.

@@ -66,7 +66,9 @@
     transition: transform var(--motion-duration-fast) var(--motion-easing);
   }
   .theme-toggle:active,
-  .btn:active:not(:disabled) {
+  .btn:active:not(:disabled),
+  .btn-icon:active:not([aria-disabled="true"]),
+  .option-toggle:active {
     transform: scale(var(--motion-press-scale));
   }
 
@@ -74,6 +76,7 @@
     @apply inline-flex items-center justify-center gap-xs rounded-pill text-body;
     padding: 11px 22px;
     min-height: 44px;
+    cursor: pointer;
     transition: transform var(--motion-duration-fast) var(--motion-easing);
   }
   .btn-primary {
@@ -85,6 +88,19 @@
     color: var(--color-ink-tertiary);
     cursor: not-allowed;
   }
+  .btn-icon {
+    @apply inline-flex shrink-0 items-center justify-center rounded-pill;
+    width: 44px;
+    height: 44px;
+    background: var(--color-divider-soft);
+    color: var(--color-ink);
+    cursor: pointer;
+    transition: transform var(--motion-duration-fast) var(--motion-easing);
+  }
+  .btn-icon[aria-disabled="true"] {
+    color: var(--color-ink-tertiary);
+    cursor: not-allowed;
+  }
 
   .dropzone {
     @apply flex flex-col items-center justify-center gap-md rounded-lg text-center;
@@ -93,8 +109,37 @@
     color: var(--color-ink-secondary);
     border: 1.5px dashed var(--color-hairline);
   }
+  .dropzone-dragover {
+    background: var(--color-surface-pearl);
+    color: var(--color-link);
+    border-style: solid;
+    border-color: var(--color-primary);
+  }
   .dropzone-title {
     @apply text-headline;
+  }
+  /* Os filhos participam do flex da dropzone; durante o envio, nome e barra tomam o lugar. */
+  .dropzone-idle {
+    display: contents;
+  }
+  .dropzone-uploading {
+    display: none;
+  }
+  .dropzone.is-uploading .dropzone-idle {
+    display: none;
+  }
+  .dropzone.is-uploading .dropzone-uploading {
+    @apply flex w-full flex-col items-center gap-sm;
+    max-width: 360px;
+  }
+  .dropzone-file {
+    @apply w-full truncate text-body-strong;
+    color: var(--color-ink);
+  }
+  /* O input fica escondido; o foco do teclado aparece no botão "Escolher arquivo". */
+  .dropzone:has(#arquivo:focus-visible) label[for="arquivo"] {
+    outline: 2px solid var(--color-primary-focus);
+    outline-offset: 2px;
   }
 
   .option-toggle {
@@ -104,6 +149,116 @@
     background: var(--color-canvas);
     color: var(--color-ink);
     border: 1px solid var(--color-hairline);
+    cursor: pointer;
+    transition: transform var(--motion-duration-fast) var(--motion-easing);
+  }
+  .option-toggle .lucide {
+    display: none;
+    width: 20px;
+    height: 20px;
+    color: var(--color-primary);
+  }
+  /* Selecionada: borda de 2 px e check em primary (o padding compensa a borda). */
+  .option-toggle:has(:checked) {
+    padding: 9px 15px;
+    border: 2px solid var(--color-primary);
+  }
+  .option-toggle:has(:checked) .lucide {
+    display: block;
+  }
+  .option-toggle:has(:focus-visible) {
+    outline: 2px solid var(--color-primary-focus);
+    outline-offset: 2px;
+  }
+
+  /* `grid-cols-1` é minmax(0, 1fr): sem ele, um nome longo alarga a coluna em vez de truncar. */
+  .job-list {
+    @apply mt-md grid grid-cols-1 gap-sm;
+  }
+  .job-card {
+    @apply flex items-center gap-md rounded-lg;
+    padding: var(--spacing-lg);
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    border: 1px solid var(--color-hairline);
+  }
+  /* O ícone do tipo acompanha a linha do nome, não o card inteiro. */
+  .job-card > .lucide {
+    align-self: flex-start;
+    margin-top: 1px;
+  }
+  .job-card-main {
+    @apply flex min-w-0 flex-1 flex-col gap-xxs;
+  }
+  .job-card-head {
+    @apply flex items-center gap-xs;
+  }
+  .job-card-name {
+    @apply min-w-0 flex-1 truncate text-body-strong;
+  }
+  .job-card-meta,
+  .job-card-stage {
+    @apply text-caption tabular-nums;
+    color: var(--color-ink-secondary);
+  }
+  .job-card .progress-bar,
+  .job-card .alert-inline {
+    margin-top: var(--spacing-xxs);
+  }
+  /* Com itens, a lista substitui o estado vazio. */
+  .recentes:has(.job-card) .empty-state {
+    display: none;
+  }
+
+  .progress-bar {
+    @apply block w-full rounded-pill;
+    appearance: none;
+    height: 4px;
+    border: none;
+    overflow: hidden;
+    background: var(--color-divider-soft);
+  }
+  .progress-bar::-webkit-progress-bar {
+    background: var(--color-divider-soft);
+  }
+  .progress-bar::-webkit-progress-value {
+    background: var(--color-primary);
+    border-radius: var(--radius-pill);
+    transition: width var(--motion-duration-base) var(--motion-easing);
+  }
+  .progress-bar::-moz-progress-bar {
+    background: var(--color-primary);
+    border-radius: var(--radius-pill);
+  }
+
+  .status-badge {
+    @apply inline-flex shrink-0 items-center rounded-pill text-caption-strong;
+    padding: 4px 10px;
+    background: var(--color-divider-soft);
+    color: var(--color-ink);
+  }
+  .status-badge-active {
+    color: var(--color-link);
+  }
+  .status-badge-success {
+    background: var(--color-status-success-bg);
+    color: var(--color-status-success);
+  }
+  .status-badge-error {
+    background: var(--color-status-error-bg);
+    color: var(--color-status-error);
+  }
+
+  .alert-inline {
+    @apply flex w-full items-start gap-xs rounded-md text-left text-callout;
+    padding: 12px 16px;
+    background: var(--color-status-error-bg);
+    color: var(--color-status-error);
+  }
+  .alert-inline .lucide {
+    width: 20px;
+    height: 20px;
+    margin-top: 1px;
   }
 
   .record-panel {

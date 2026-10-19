@@ -238,6 +238,10 @@ components:
     typography: "{typography.caption-strong}"
     rounded: "{rounded.pill}"
     padding: 4px 10px
+  status-badge-active:
+    backgroundColor: "{colors.divider-soft}"
+    textColor: "{colors.link}"
+    rounded: "{rounded.pill}"
   status-badge-success:
     backgroundColor: "{colors.status-success-bg}"
     textColor: "{colors.status-success}"
@@ -568,24 +572,27 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 - **Enviando:** a chamada dá lugar ao nome do arquivo e a uma `{component.progress-bar}` do upload.
 - **Erro:** `{component.alert-inline}` logo abaixo ("Formato não suportado. Use MP4, MOV, MKV, MP3, M4A, WAV ou OGG.").
 
-**`option-toggle`** — Opção ligável em formato de pílula: fundo branco, borda de 1 px `{colors.hairline}`, `{typography.callout}`, com ícone de check à esquerda. Selecionada (`{component.option-toggle-selected}`): borda de 2 px e check em `{colors.primary}`.
+**`option-toggle`** — Opção ligável em formato de pílula (um checkbox): fundo branco, borda de 1 px `{colors.hairline}`, `{typography.callout}`. Selecionada (`{component.option-toggle-selected}`): borda de 2 px e ícone de check à esquerda, ambos em `{colors.primary}`. Sem seleção, não há check: a borda fina e a ausência do ícone marcam o estado sem depender só de cor.
 
 **`job-card`** — Um job na lista "Recentes": fundo branco, borda hairline, `{rounded.lg}`, padding 24 px.
 
-- Linha 1: ícone do tipo (vídeo, áudio, gravação), nome em `{typography.body-strong}` e `{component.status-badge}` à direita.
+- Linha 1: ícone do tipo (vídeo, áudio, gravação), nome em `{typography.body-strong}` (truncado com reticências quando não cabe) e `{component.status-badge}` à direita.
 - Linha 2: metadados em `{typography.caption}` `{colors.ink-secondary}` (duração · tamanho · data).
-- Ativo: etapa atual ("Transcrevendo… 42%") e `{component.progress-bar}`, com `{component.button-icon}` de cancelar.
+- À direita do card, um único `{component.button-icon}` de ação, que mantém o foco do teclado quando o card se atualiza.
+- Na fila: só o badge e o botão de cancelar.
+- Ativo: etapa atual ("Transcrevendo… 42%") e `{component.progress-bar}`, com o botão de cancelar. Depois do pedido, a etapa vira "Cancelando…" e o botão fica inativo até o pipeline parar.
 - Concluído: `{component.button-primary}` "Ver transcrição", `{component.button-secondary}` "Baixar .txt", `{component.button-utility}` "Abrir pasta". Se houve compactação, "312 MB → 48 MB (−85%)".
 - Falhou: mensagem em `{component.alert-inline}` e "Tentar de novo".
+- Concluído, Falhou ou Cancelado: o botão de ação vira "Remover" (lixeira), que tira o job da lista. Enquanto remover só apaga a cópia temporária do envio, não há confirmação; quando também apagar as saídas, passa pelo `{component.confirm-dialog}`.
 
-**`progress-bar`** — Trilho de 4 px em `{colors.divider-soft}`, preenchimento `{colors.primary}`, pílula. Com `role="progressbar"` e `aria-valuenow`.
+**`progress-bar`** — Trilho de 4 px em `{colors.divider-soft}`, preenchimento `{colors.primary}`, pílula. É o elemento nativo `<progress>`, que já expõe o papel `progressbar` e o valor; a política de segurança do app (CSP) bloqueia a largura por `style` inline.
 
 **`status-badge`** — Pílula pequena em `{typography.caption-strong}`, padding 4 × 10 px.
 
 | Estado | Variante |
 | --- | --- |
 | Na fila | `{component.status-badge}` (neutro) |
-| Processando | `{component.status-badge}` com texto em `{colors.primary}` |
+| Processando | `{component.status-badge-active}` (texto em `{colors.link}`, que passa AA nos dois temas) |
 | Concluído | `{component.status-badge-success}` |
 | Aviso | `{component.status-badge-warning}` |
 | Falhou | `{component.status-badge-error}` |
@@ -627,7 +634,7 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 - Contraste AA (4,5:1) em todo texto, nos dois temas; `{colors.ink-tertiary}` e `{colors.recording}` nunca carregam texto essencial.
 - Anel de foco visível de 2 px em `{colors.primary-focus}` em todo elemento interativo; nunca `outline: none` sem substituto.
 - Navegação completa por teclado. Atalho global **Ctrl+Shift+R** para Gravar / Parar, mostrado no tooltip do botão.
-- `aria-live="polite"` no progresso dos jobs e nos toasts; o timer de gravação anuncia só início e fim, não cada segundo.
+- `aria-live="polite"` na entrada e no fim de cada job (não a cada %) e nos toasts; o timer de gravação anuncia só início e fim, não cada segundo.
 - Alvos de clique de no mínimo 44 × 44 px.
 - Estado nunca depende só de cor: badges têm texto, o botão de gravar troca de forma (círculo → quadrado).
 
@@ -635,7 +642,7 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 - Português do Brasil, frases curtas, tratamento por "você".
 - Botões com verbos diretos: "Gravar", "Parar", "Escolher arquivo", "Copiar texto", "Baixar .txt", "Abrir pasta", "Tentar de novo".
-- Etapas no gerúndio: "Na fila", "Extraindo áudio…", "Transcrevendo… 42%", "Compactando… 73%".
+- Etapas no gerúndio: "Na fila", "Extraindo áudio…", "Transcrevendo… 42%", "Compactando… 73%", "Cancelando…".
 - Erros dizem o que aconteceu e o que fazer: "Este arquivo não tem áudio. Escolha um vídeo com som." — nunca códigos ou jargão técnico.
 - Sem exclamações, sem emojis.
 

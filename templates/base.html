@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
+  {#- 422 e 507 trazem a mensagem de erro do envio (HX-Retarget); os outros erros não trocam nada. #}
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"507","swap":true},{"code":"[45]..","swap":false,"error":true},{"code":"...","swap":false}]}'>
   <title>{% block title %}Scriba{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="{{ layout.favicon }}">
   <link rel="stylesheet" href="{{ layout.css }}">
@@ -29,6 +30,9 @@
       <span>Funciona offline · nada sai do seu computador</span>
     </div>
   </footer>
+
+  {#- Fim dos jobs e envios, anunciado a leitores de tela (atualizado fora de banda). #}
+  <div id="avisos" class="sr-only" aria-live="polite"></div>
 
   <script src="{{ layout.htmx }}"></script>
   <script src="{{ layout.js }}"></script>

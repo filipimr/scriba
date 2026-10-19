@@ -1,0 +1,6 @@
+{%- for job in jobs %}
+{% include "partials/job_card.html" %}
+{%- endfor %}
+{%- if let Some(notice) = notice %}
+<div id="avisos" hx-swap-oob="innerHTML">{{ notice }}</div>
+{%- endif %}

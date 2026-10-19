@@ -2,7 +2,7 @@
 
 App local para Windows, distribuído como um único `.exe`, que **grava** (microfone + som do PC), **compacta** (vídeos e áudios) e **transcreve tudo o que foi falado**, entregando o **texto**. Este documento reúne as decisões de produto e de arquitetura, as fases de desenvolvimento com checklists, a política de testes, os riscos e o registro de decisões.
 
-Última atualização: 2026-10-17.
+Última atualização: 2026-10-19.
 
 ## Status das fases
 
@@ -11,7 +11,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | 0 | Fundação e spikes de risco | Concluída |
 | 1 | CI/CD no GitHub | Concluída |
 | 2 | Esqueleto do app e design system | Concluída |
-| 3 | Fila de jobs e upload | Não iniciada |
+| 3 | Fila de jobs e upload | Concluída |
 | 4 | Transcrição de arquivos (MVP) | Não iniciada |
 | 5 | Gravação ao vivo | Não iniciada |
 | 6 | Compactação de vídeo e áudio | Não iniciada |
@@ -27,6 +27,7 @@ Valores possíveis: Não iniciada, Em andamento, Concluída.
   - Marcar os checklists.
   - Mudar o status para "Concluída".
   - Registrar as decisões e os números medidos no [Registro de decisões](#registro-de-decisões).
+  - Atualizar o aviso de estado do `README.md` (o que o app já faz).
 - **A partir da Fase 1, uma branch e um PR por fase**, com o CI verde antes do merge.
 - **Definition of Done:** veja [Qualidade e testes](#qualidade-e-testes).
 - Se um spike ou um teste derrubar uma decisão (por exemplo, se o exe único se mostrar inviável), este roadmap é revisado antes de seguir.
@@ -99,7 +100,7 @@ O PRD original (codinome "MediaPipe Core") propõe um monólito em Rust: Axum + 
 | Estado | Fila em memória (`Arc<RwLock<HashMap>>` + `mpsc`), mais um manifesto `job.json` por saída | O histórico sobrevive a reinícios sem precisar de banco |
 | Saídas | `Documentos\Scriba\AAAA-MM-DD HHmm - nome\` (`transcricao.txt`, `audio.m4a`/`video.mp4`). Temporários em `%LOCALAPPDATA%\Scriba` | Todos os caminhos são configuráveis, o que deixa os testes isolados |
 | Compressão | Vídeo: x264 CRF ~26 (padrão) ou NVENC ("rápido"), até 1080p, áudio AAC. Áudio e gravações: AAC `.m4a` 96 kbps mono | Mantém o original se o ganho for menor que 5% |
-| Testabilidade | Traits `Transcriber`, `MediaEngine`, `AudioSource` e `Clock`. Feature `test-support` com fakes e a flag `--fake-audio`, fora do release | Toda a lógica roda no CI, sem placa de som nem GPU |
+| Testabilidade | Traits `Pipeline` (Fase 3), `Transcriber`, `MediaEngine`, `AudioSource` e `Clock`. Feature `test-support` com fakes e as flags `--fake-pipeline` e `--fake-audio`, fora do release | Toda a lógica roda no CI, sem placa de som nem GPU |
 
 ## Arquitetura
 
@@ -247,23 +248,23 @@ Base no PRD: Sprint 2 e o polling da Sprint 4. Objetivo: arquivos entram por upl
 
 **Entregas:**
 
-- [ ] Modelo de job: id ULID, tipo, opções (transcrever/compactar), etapa, %, erro e saídas.
-- [ ] Worker em `std::thread` com `blocking_recv`, `catch_unwind` por job e cancelamento por `AtomicBool`.
-- [ ] Upload multipart em streaming para o disco (limite de corpo desativado só nessa rota).
-- [ ] Rotas `POST /api/jobs`, `GET /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel` e `DELETE /api/jobs/{id}`.
-- [ ] Polling de 1 s só para jobs ativos; a resposta 286 encerra o polling.
-- [ ] Pipeline falso atrás do trait, para validar a UI antes dos motores.
+- [x] Modelo de job: id ULID, tipo, opções (transcrever/compactar), etapa, %, erro e saídas.
+- [x] Worker em `std::thread` com `blocking_recv`, `catch_unwind` por job e cancelamento por `AtomicBool`.
+- [x] Upload multipart em streaming para o disco (limite de corpo desativado só nessa rota).
+- [x] Rotas `POST /api/jobs`, `GET /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel` e `DELETE /api/jobs/{id}`.
+- [x] Polling de 1 s só para jobs ativos; a resposta 286 encerra o polling.
+- [x] Pipeline falso atrás do trait, para validar a UI antes dos motores.
 
 **Testes:**
 
-- [ ] Unitários: máquina de estados (proptest) e semântica de cancelamento.
-- [ ] Integração: upload grande gravado no disco em streaming, sem acumular na memória; panic no pipeline vira FALHOU.
-- [ ] E2E: upload → progresso → concluído; cancelar; falha exibida.
+- [x] Unitários: máquina de estados (proptest) e semântica de cancelamento.
+- [x] Integração: upload grande gravado no disco em streaming, sem acumular na memória; panic no pipeline vira FALHOU.
+- [x] E2E: upload → progresso → concluído; cancelar; falha exibida.
 
 **Pronto quando:**
 
-- [ ] Um upload de 2 GB mantém a RAM estável.
-- [ ] Progresso, cancelamento e falha aparecem corretos na UI.
+- [x] Um upload de 2 GB mantém a RAM estável.
+- [x] Progresso, cancelamento e falha aparecem corretos na UI.
 
 ### Fase 4 — Transcrição de arquivos (MVP)
 
@@ -284,6 +285,11 @@ Base no PRD: Sprint 3.1 e Sprint 4. Objetivo: qualquer áudio ou vídeo vira tex
   - Mostrar na UI qual backend está em uso e uma estimativa de tempo antes de começar.
 - [ ] `transcript`: parágrafos (pausa > 1,5 s quebra), `[hh:mm:ss]` em cada parágrafo e cabeçalho (origem, data, duração). Gera `transcricao.txt` e `job.json`.
 - [ ] UI: leitor da transcrição, Copiar texto, Baixar .txt e Abrir pasta.
+- [ ] Herdado da Fase 3:
+  - O pipeline real substitui o falso no app; o falso vai para a feature `test-support`, com a flag `--fake-pipeline` para o E2E.
+  - "Tentar de novo" no job que falhou (o envio fica guardado até a nova tentativa).
+  - Remover um job que tem saídas passa pelo `confirm-dialog`.
+  - Card com duração e data (probe do FFmpeg e hora local, a mesma da pasta `AAAA-MM-DD HHmm`).
 
 **Testes:**
 
@@ -380,7 +386,7 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 - [ ] Histórico reconstruído a partir dos `job.json`, `config.json` e limpeza de temporários antigos.
 - [ ] `release.yml` completo: Vulkan SDK no runner, modelo embutido e `--self-test` exercitando também o fallback para CPU (o runner não tem GPU).
 - [ ] `cargo xtask dist` faz o mesmo build localmente.
-- [ ] README pt-BR e `CLAUDE.md` com os comandos reais.
+- [ ] README com o uso final (bandeja e release completa; ele existe desde a Fase 3) e `CLAUDE.md` com os comandos reais.
 
 **Testes:**
 
@@ -469,6 +475,21 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-17 | Fase 2 | E2E no Edge instalado (`channel: "msedge"`), sem baixar navegador. Referência visual gerada no runner e versionada em `e2e/tests/tela.spec.ts-snapshots/`: o workflow manual `e2e-snapshots.yml` (ou um run que falhe) publica as imagens como artefato para commit. Localmente a comparação visual é pulada | Renderização local e do runner diferem (fontes, DPI) |
 | 2026-10-17 | Fase 2 | `about.hbs` credita os assets que não são crates: Inter (OFL 1.1), htmx (0BSD), Lucide (ISC), Tailwind (MIT) | O `cargo about` só enxerga crates |
 | 2026-10-17 | Fase 2 | Medição: job `checks` com cache em ~7–9 min (7 min 20 s e 8 min 41 s nas duas execuções do PR; antes ~3 min 50 s); a diferença é o `cargo build` de debug para o E2E, separado do build instrumentado da cobertura | Ainda bem abaixo da meta de 20 min |
+| 2026-10-19 | Fase 3 | Versões: `axum` com a feature `multipart` (`multer` 3.1.0) e `tokio` com `fs`, `io-util` e `sync`. Só nos testes: `proptest` 1.12.0, `insta` e `windows-sys` 0.61.2 (pico de memória do processo) | Reprodutibilidade; o exe só ganha o parser de multipart |
+| 2026-10-19 | Fase 3 | A API da fila responde fragmentos HTML (htmx), sem JSON. Erro de envio volta com 422 (507 se a gravação falhar), `HX-Retarget` para o alerta da dropzone e `responseHandling` no `htmx-config` liberando a troca. O card ativo faz polling de 1 s trocando o card inteiro; no fim, 286 com o card final | O único cliente é a própria UI; o status HTTP continua certo para os testes |
+| 2026-10-19 | Fase 3 | `JobId` no formato ULID gerado no próprio código (`getrandom`), monotônico no mesmo milissegundo; store em `RwLock<BTreeMap>` em vez do `HashMap` previsto | Sem crate novo; "Recentes" sai na ordem de criação pelo próprio id |
+| 2026-10-19 | Fase 3 | Barra de progresso no `<progress>` nativo; o comportamento fica no `app.js`, sem `hx-on` | A CSP (`default-src 'self'`) bloqueia `style` inline e `eval`; o `<progress>` já é acessível |
+| 2026-10-19 | Fase 3 | O `FakePipeline` é o pipeline do app até a Fase 4, com ganchos pelo nome do arquivo: `lento` (10× mais devagar), `falha` (erro amigável) e `panico`. Na Fase 4 ele vai para a feature `test-support` | O objetivo da fase é validar a fila e a UI antes dos motores |
+| 2026-10-19 | Fase 3 | Envio gravado em `uploads/<id>.<ext>` (o nome do cliente só é exibido), apagado quando o job termina ou é removido; `uploads/` é esvaziada ao iniciar. As opções vêm antes do arquivo no formulário, e o servidor recusa o envio sem opção antes de gravar; num erro, lê o corpo até o fim para o navegador receber a resposta | Nenhum caminho controlado pelo cliente, nenhuma sobra entre execuções, erro rápido em envio grande |
+| 2026-10-19 | Fase 3 | Cancelamento cooperativo: na fila, termina na hora; rodando, vira "Cancelando…" e a flag para o pipeline. Depois do pedido, `Ok` vale como Concluído, erro vira Cancelado e panic vira Falhou. "Remover" só em job terminado e sem confirmação, porque só apaga a cópia temporária; "Tentar de novo" e o `confirm-dialog` ficam para a Fase 4 | Semântica testada com proptest e com o worker real |
+| 2026-10-19 | Fase 3 | Ctrl+C cancela o job ativo e espera o worker; as requisições em andamento têm 5 s (`SHUTDOWN_GRACE`) | Um upload longo ou parado não trava o encerramento |
+| 2026-10-19 | Fase 3 | O botão de ação do card mantém o id entre Cancelar e Remover, e o htmx devolve o foco a ele a cada polling (teste E2E). A região `#avisos` anuncia só a entrada e o fim dos jobs | O card é trocado a cada segundo; anunciar cada % seria ruído |
+| 2026-10-19 | Fase 3 | Design: `status-badge-active` com `colors.link`, porque o `primary` pedido para "Processando" dava 2,97:1 no escuro; `option-toggle` mostra o check só quando selecionada | Contraste AA e a regra "texto azul usa `colors.link`" |
+| 2026-10-19 | Fase 3 | E2E com um `scriba.exe` por teste (fixture `scriba`), no lugar do `global-setup` compartilhado | Mitigação "diretórios temporários por teste"; nenhum estado vaza entre testes |
+| 2026-10-19 | Fase 3 | Piso de cobertura sobe de 70% para 85% | A Fase 2 terminou com 92,6% das linhas cobertas no CI |
+| 2026-10-19 | Fase 3 | Medição: upload de 2 GB pelo exe de debug em 12,4 s (165 MB/s), com o pico de working set indo de 14 MB para 19 MB (+5 MB). O CI repete com 256 MB e falha acima de +100 MB | Critério "upload de 2 GB com RAM estável" |
+| 2026-10-19 | Fase 3 | `.gitattributes` com `* text=auto eol=lf`: todo texto sai com LF no checkout, em qualquer máquina | No runner, o `core.autocrlf` trocava os SVGs embutidos por CRLF e quebrava o snapshot HTML do card; os assets do exe ficam idênticos entre máquinas. Custo único: o `vcpkg.json` passa a sair com LF, o hash da chave do cache muda e o FFmpeg é recompilado uma vez na branch e uma na `main` |
+| 2026-10-19 | Fase 3 | Medição no CI do PR: job `checks` em 39 min, dos quais 29,5 min recompilando o FFmpeg (cache refeito pelo `.gitattributes`); sem isso, ~9,5 min, com testes e cobertura em ~3 min e os 16 testes E2E em ~1 min. Cobertura de linhas: 94,1% (piso de 85%) | Com cache, ainda bem abaixo da meta de 20 min |
 
 ## Referências verificadas
 

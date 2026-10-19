@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Phases 0 (foundation and risk spikes), 1 (CI/CD) and 2 (app skeleton and design system) are done. The repo is `filipimr/scriba` (public) with `main` protected (checks `checks` and `deny` required). The `scriba` binary serves the UI: `src/app.rs` (single instance + server lifecycle), `src/web/` (Axum router, `security.rs` token/Host/Origin guard, embedded `assets.rs`, askama `pages.rs`), `src/config.rs` (paths, `config.json`), `src/instance.rs` (`instance.json`), plus `--self-test` in `src/self_test.rs`. Templates live in `templates/`, CSS source in `ui/`, embedded files in `assets/`. Other crates: `crates/scriba-model` (model embedded via `include_bytes!` behind the `embedded-model` feature), `crates/spikes` (the Phase 0 spikes as tests), and `xtask`. No jobs, transcription or recording in the UI yet. Document new commands here as each phase adds them.
+Phases 0 (foundation and risk spikes), 1 (CI/CD), 2 (app skeleton and design system) and 3 (job queue and upload) are done. The repo is `filipimr/scriba` (public) with `main` protected (checks `checks` and `deny` required); `README.md` (pt-BR) presents it on GitHub. The `scriba` binary serves the UI:
+
+- `src/app.rs`: single instance and the server + worker lifecycle.
+- `src/web/`: Axum router, `security.rs` (token/Host/Origin guard), embedded `assets.rs`, askama `pages.rs`, and `jobs.rs` (streaming multipart upload to `<data-dir>/uploads`, the `/api/jobs` routes answering HTML fragments; 286 stops the 1 s polling of a card).
+- `src/jobs/`: the in-memory queue. `model.rs` holds the pure state machine (queued, running, done, failed, canceled); `id.rs` a hand-rolled ULID; `store.rs` the `Jobs` handle; `worker.rs` the dedicated thread (one job at a time, `catch_unwind`, cooperative cancel via `AtomicBool`); `pipeline.rs` the `Pipeline` trait.
+- `fake.rs`: `FakePipeline` is the app's pipeline until Phase 4. File names steer it: `lento` (10× slower), `falha` (friendly failure) and `panico` (panic), handy for manual and E2E tests.
+- `src/config.rs` (paths, `config.json`), `src/instance.rs` (`instance.json`) and `--self-test` in `src/self_test.rs`.
+
+Templates live in `templates/`, CSS source in `ui/`, embedded files in `assets/`. Other crates: `crates/scriba-model` (model embedded via `include_bytes!` behind the `embedded-model` feature), `crates/spikes` (the Phase 0 spikes as tests), and `xtask`. No transcription or recording yet. Document new commands here as each phase adds them.
 
 ## Environment and commands
 
@@ -14,12 +22,14 @@ Phases 0 (foundation and risk spikes), 1 (CI/CD) and 2 (app skeleton and design 
 - `cargo xtask model` downloads the models to `models/` and checks SHA-256; `--only base` downloads just the small test model (what CI uses). `cargo xtask fixtures` regenerates `tests/fixtures/`; it needs the "Microsoft Maria" SAPI voice and the `ffmpeg` CLI.
 - Lint: `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --features spikes/vulkan -- -D warnings`.
 - Tests: `cargo test --workspace --features spikes/vulkan`. Hardware tests (GPU, NVENC, real audio devices, large model) are `#[ignore = "hardware"]`; run them locally with `cargo test -p spikes --features vulkan -- --ignored`. Measure whisper speed only in `--release`.
+- Upload memory: `tests/upload.rs` streams `SCRIBA_UPLOAD_MB` megabytes (default 256, what CI runs) through the real exe and checks its peak working set. The Phase 3 criterion is `SCRIBA_UPLOAD_MB=2048 cargo test --test upload -- --nocapture`.
+- HTML snapshots (`insta`) of the job card live in `src/web/snapshots/`. After an intended markup change, accept them with `INSTA_UPDATE=always cargo test --lib web::jobs` and review the diff.
 - CI runs `cargo llvm-cov nextest --workspace --profile ci` (nextest config in `.config/nextest.toml` serializes whisper tests) and `cargo deny check` (`deny.toml`). CI has no Vulkan, so clippy there runs without `spikes/vulkan`.
 - `scriba --self-test` transcribes a sample on CPU and encodes a short x264 clip. Release builds use `cargo build --release --features embedded-test-model` (embeds `ggml-base-q5_1.bin` + `tests/fixtures/fala.wav`); without the feature it reads from `models/`.
 - Releases: push a tag `vX.Y.Z` matching the `scriba` version in `Cargo.toml`; `.github/workflows/release.yml` builds, smoke-tests, and publishes exe + SHA-256 + `THIRD_PARTY_LICENSES.html` (`cargo about`).
 - Run the app: `cargo run` opens the browser on `http://127.0.0.1:47800/?t=<token>` (the token becomes an `HttpOnly; SameSite=Strict` cookie). Flags: `--no-open`, `--port` (falls back to a free port if busy; `0` = any), `--data-dir` (default `%LOCALAPPDATA%\Scriba`), `--output-dir` (default `Documentos\Scriba`). A second run finds the live instance via `<data-dir>/instance.json` + `/health`, prints its URL and exits. Ctrl+C shuts down cleanly.
 - CSS: `cargo xtask css` regenerates `ui/tokens.css` from the `DESIGN-scriba.md` YAML (fails if any component text/background pair is below WCAG AA) and compiles `assets/app.css` with the pinned Tailwind CLI (downloaded to `$CARGO_TARGET_DIR/tools`). Both outputs are committed; run it after changing tokens, `ui/app.css` or template classes. CI runs `cargo xtask css --check`.
-- E2E: `cargo build && cd e2e && npm ci && npx playwright test`. It runs the debug `scriba.exe` (from `CARGO_TARGET_DIR`, or `SCRIBA_EXE`) in the installed Edge (`channel: "msedge"`). Visual comparisons run only in CI; references live in `e2e/tests/*-snapshots/` and are regenerated by the manual `e2e-snapshots.yml` workflow (download the artifact and commit it).
+- E2E: `cargo build && cd e2e && npm ci && npx playwright test`. The `scriba` fixture in `e2e/fixtures.ts` starts a fresh debug `scriba.exe` per test (from `CARGO_TARGET_DIR`, or `SCRIBA_EXE`; port 0, temp data dir), driven in the installed Edge (`channel: "msedge"`). Visual comparisons run only in CI; references live in `e2e/tests/*-snapshots/` and are regenerated by the manual `e2e-snapshots.yml` workflow (`gh workflow run e2e-snapshots.yml --ref <branch>`, then download the artifact and commit it).
 - Spike D binary: `cargo build --release -p spikes --features "vulkan embedded-model" --bin exe_unico`.
 
 - `ROADMAP.md` (pt-BR) is the project plan. It covers:
