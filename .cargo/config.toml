@@ -6,12 +6,13 @@ xtask = "run --package xtask --"
 rustflags = ["-C", "target-feature=+crt-static"]
 
 [env]
-# FFmpeg estático do vcpkg com CRT estático (modo manifesto, em vcpkg_installed/).
-# Instalar: vcpkg install --triplet x64-windows-static --x-install-root=vcpkg_installed
-VCPKGRS_TRIPLET = "x64-windows-static"
+# FFmpeg estático do vcpkg com CRT estático, só release (modo manifesto, em vcpkg_installed/;
+# o triplet é o overlay de triplets/).
+# Instalar: vcpkg install --triplet x64-windows-static-release --x-install-root=vcpkg_installed
+VCPKGRS_TRIPLET = "x64-windows-static-release"
 VCPKGRS_DYNAMIC = "0"
 VCPKG_INSTALLED_DIR = { value = "vcpkg_installed", relative = true }
-FFMPEG_DIR = { value = "vcpkg_installed/x64-windows-static", relative = true }
+FFMPEG_DIR = { value = "vcpkg_installed/x64-windows-static-release", relative = true }
 LIBCLANG_PATH = "C:\\Program Files\\LLVM\\bin"
 
 # whisper.cpp: com MSVC o GGML_NATIVE não detecta a CPU e compila sem SIMD.

@@ -2,6 +2,9 @@
   "name": "scriba",
   "version-string": "0.0.0",
   "builtin-baseline": "7d5f3c6241729acbbb7774f54bf687429aaf6492",
+  "vcpkg-configuration": {
+    "overlay-triplets": ["triplets"]
+  },
   "dependencies": [
     {
       "name": "ffmpeg",

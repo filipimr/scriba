@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
     paths-ignore: ["**.md", "docs/**"]
+  # Semanal na `main`: renova os caches antes dos 7 dias sem acesso que o GitHub
+  # tolera e pega quebras do runner e avisos novos do RustSec.
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
   # Sem paths-ignore no PR: os checks são obrigatórios na `main`, e um PR que não
   # os roda (só .md) ficaria bloqueado para sempre.
   pull_request:
@@ -18,7 +23,7 @@ permissions:
 jobs:
   checks:
     runs-on: windows-latest
-    # A 1ª execução compila o FFmpeg (~1 h); depois vem do cache.
+    # Sem cache, o FFmpeg compila em ~11–17 min; depois vem do cache.
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
