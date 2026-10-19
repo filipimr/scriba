@@ -2,7 +2,7 @@
 
 App local para Windows, distribuído como um único `.exe`, que **grava** (microfone + som do PC), **compacta** (vídeos e áudios) e **transcreve tudo o que foi falado**, entregando o **texto**. Este documento reúne as decisões de produto e de arquitetura, as fases de desenvolvimento com checklists, a política de testes, os riscos e o registro de decisões.
 
-Última atualização: 2026-10-17.
+Última atualização: 2026-10-19.
 
 ## Status das fases
 
@@ -11,7 +11,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | 0 | Fundação e spikes de risco | Concluída |
 | 1 | CI/CD no GitHub | Concluída |
 | 2 | Esqueleto do app e design system | Concluída |
-| 3 | Fila de jobs e upload | Em andamento |
+| 3 | Fila de jobs e upload | Concluída |
 | 4 | Transcrição de arquivos (MVP) | Não iniciada |
 | 5 | Gravação ao vivo | Não iniciada |
 | 6 | Compactação de vídeo e áudio | Não iniciada |
@@ -248,23 +248,23 @@ Base no PRD: Sprint 2 e o polling da Sprint 4. Objetivo: arquivos entram por upl
 
 **Entregas:**
 
-- [ ] Modelo de job: id ULID, tipo, opções (transcrever/compactar), etapa, %, erro e saídas.
-- [ ] Worker em `std::thread` com `blocking_recv`, `catch_unwind` por job e cancelamento por `AtomicBool`.
-- [ ] Upload multipart em streaming para o disco (limite de corpo desativado só nessa rota).
-- [ ] Rotas `POST /api/jobs`, `GET /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel` e `DELETE /api/jobs/{id}`.
-- [ ] Polling de 1 s só para jobs ativos; a resposta 286 encerra o polling.
-- [ ] Pipeline falso atrás do trait, para validar a UI antes dos motores.
+- [x] Modelo de job: id ULID, tipo, opções (transcrever/compactar), etapa, %, erro e saídas.
+- [x] Worker em `std::thread` com `blocking_recv`, `catch_unwind` por job e cancelamento por `AtomicBool`.
+- [x] Upload multipart em streaming para o disco (limite de corpo desativado só nessa rota).
+- [x] Rotas `POST /api/jobs`, `GET /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel` e `DELETE /api/jobs/{id}`.
+- [x] Polling de 1 s só para jobs ativos; a resposta 286 encerra o polling.
+- [x] Pipeline falso atrás do trait, para validar a UI antes dos motores.
 
 **Testes:**
 
-- [ ] Unitários: máquina de estados (proptest) e semântica de cancelamento.
-- [ ] Integração: upload grande gravado no disco em streaming, sem acumular na memória; panic no pipeline vira FALHOU.
-- [ ] E2E: upload → progresso → concluído; cancelar; falha exibida.
+- [x] Unitários: máquina de estados (proptest) e semântica de cancelamento.
+- [x] Integração: upload grande gravado no disco em streaming, sem acumular na memória; panic no pipeline vira FALHOU.
+- [x] E2E: upload → progresso → concluído; cancelar; falha exibida.
 
 **Pronto quando:**
 
-- [ ] Um upload de 2 GB mantém a RAM estável.
-- [ ] Progresso, cancelamento e falha aparecem corretos na UI.
+- [x] Um upload de 2 GB mantém a RAM estável.
+- [x] Progresso, cancelamento e falha aparecem corretos na UI.
 
 ### Fase 4 — Transcrição de arquivos (MVP)
 
