@@ -12,6 +12,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | 1 | CI/CD no GitHub | Concluída |
 | 2 | Esqueleto do app e design system | Concluída |
 | 3 | Fila de jobs e upload | Concluída |
+| 3.5 | Build nativo mais rápido | Não iniciada |
 | 4 | Transcrição de arquivos (MVP) | Não iniciada |
 | 5 | Gravação ao vivo | Não iniciada |
 | 6 | Compactação de vídeo e áudio | Não iniciada |
@@ -266,6 +267,40 @@ Base no PRD: Sprint 2 e o polling da Sprint 4. Objetivo: arquivos entram por upl
 - [x] Um upload de 2 GB mantém a RAM estável.
 - [x] Progresso, cancelamento e falha aparecem corretos na UI.
 
+### Fase 3.5 — Build nativo mais rápido
+
+Objetivo: cortar o build frio do FFmpeg quase pela metade, no CI e na máquina de desenvolvimento, e manter o cache do CI vivo.
+
+**Contexto:** os dois builds frios de 2026-10-19, com a mesma configuração e runners diferentes, mediram onde vai o tempo do passo `setup-native`:
+
+| Etapa | PR #11 | `main` |
+| --- | --- | --- |
+| Clone e bootstrap do vcpkg | ~40 s | ~42 s |
+| x264, debug + release | 3,8 min | 2,4 min |
+| FFmpeg, versão release | 11,3 min | 7,1 min |
+| FFmpeg, versão debug | 11,3 min | 6,8 min |
+| `setup-native` total | 29,5 min | 18,9 min |
+
+A versão debug, cerca de 38% do passo, nunca é usada: o Rust linka sempre o CRT de release, e o `ffmpeg-sys-next`, com `FFMPEG_DIR`, procura as libs só em `<dir>/lib`. As libs debug ocupam 211 dos 430 MB do `vcpkg_installed` local. O cache também é frágil: o GitHub apaga um cache que fica 7 dias sem acesso, e a `main` não lê caches criados em PR, então mudar a chave custa um build frio na branch e outro na `main`.
+
+**Entregas:**
+
+- [ ] Triplet `x64-windows-static-release`, versionado como overlay em `triplets/`, no lugar do `x64-windows-static`. Atualiza `.cargo/config.toml` (`FFMPEG_DIR`, `VCPKGRS_TRIPLET`), a ação `setup-native`, o README e o `CLAUDE.md`. Quem já tem o ambiente reinstala o FFmpeg uma vez.
+- [ ] Chave do cache do FFmpeg com o nome do triplet e o hash de `vcpkg.json` e `triplets/`.
+- [ ] CI semanal agendado na `main` (`schedule` no `ci.yml`). Ele mantém todos os caches vivos (FFmpeg, Rust, modelo, npm) e ainda pega quebras vindas de atualizações do runner e avisos novos do RustSec.
+- [ ] O `CLAUDE.md` passa a explicar o custo de mudar o `vcpkg.json` ou o triplet: um build frio na branch e outro na `main`.
+
+**Testes:**
+
+- [ ] CI verde com cache frio (a chave nova força o build) e o tempo medido.
+- [ ] Localmente: instalar com o novo triplet, rodar `cargo test --workspace --features spikes/vulkan` e o `scriba --self-test` do build de release, e conferir no `dumpbin /dependents` que o exe não depende de DLLs do FFmpeg.
+
+**Pronto quando:**
+
+- [ ] O log do vcpkg no CI não tem mais build de debug, e o build frio cai ~40%. Hoje leva de 19 a 30 min, conforme o runner; a estimativa é de 11 a 17 min.
+- [ ] O cache do FFmpeg cai de 77 MB para ~40 MB.
+- [ ] O CI agendado roda na `main` sem erro.
+
 ### Fase 4 — Transcrição de arquivos (MVP)
 
 Base no PRD: Sprint 3.1 e Sprint 4. Objetivo: qualquer áudio ou vídeo vira texto em pt-BR. É a primeira entrega de valor.
@@ -409,6 +444,7 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 - Atalho global para gravar.
 - macOS/Linux.
 - Runner self-hosted na máquina de desenvolvimento para rodar a suíte de hardware no CI (só com repositório privado, por segurança).
+- FFmpeg enxuto: um port em overlay só com os decoders, encoders e formatos usados encurta o build e diminui o exe, mas pode recusar arquivos que hoje abrem. Avaliar junto com o tamanho do exe.
 
 ## Riscos e mitigações
 
@@ -490,6 +526,7 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-19 | Fase 3 | Medição: upload de 2 GB pelo exe de debug em 12,4 s (165 MB/s), com o pico de working set indo de 14 MB para 19 MB (+5 MB). O CI repete com 256 MB e falha acima de +100 MB | Critério "upload de 2 GB com RAM estável" |
 | 2026-10-19 | Fase 3 | `.gitattributes` com `* text=auto eol=lf`: todo texto sai com LF no checkout, em qualquer máquina | No runner, o `core.autocrlf` trocava os SVGs embutidos por CRLF e quebrava o snapshot HTML do card; os assets do exe ficam idênticos entre máquinas. Custo único: o `vcpkg.json` passa a sair com LF, o hash da chave do cache muda e o FFmpeg é recompilado uma vez na branch e uma na `main` |
 | 2026-10-19 | Fase 3 | Medição no CI do PR: job `checks` em 39 min, dos quais 29,5 min recompilando o FFmpeg (cache refeito pelo `.gitattributes`); sem isso, ~9,5 min, com testes e cobertura em ~3 min e os 16 testes E2E em ~1 min. Cobertura de linhas: 94,1% (piso de 85%) | Com cache, ainda bem abaixo da meta de 20 min |
+| 2026-10-19 | Planejamento | Cria a Fase 3.5 (build nativo mais rápido): triplet `x64-windows-static-release`, chave do cache com o triplet e CI semanal na `main`. Ficam de fora o cache NuGet do vcpkg (a chave inclui o hash do compilador, invalidado a cada atualização do MSVC no runner) e o clone raso do vcpkg (economiza menos de 30 s e o modo manifesto precisa do histórico); o FFmpeg enxuto vai para o Backlog | Os dois builds frios de 2026-10-19 levaram 29,5 e 18,9 min no `setup-native`, dos quais 11,3 e 6,8 min compilando o FFmpeg em debug, que nunca é linkado |
 
 ## Referências verificadas
 
