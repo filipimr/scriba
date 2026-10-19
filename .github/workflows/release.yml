@@ -27,6 +27,11 @@ jobs:
             throw "tag ${{ github.ref_name }} difere da versão v$version do Cargo.toml"
           }
 
+      # O build script do whisper-rs-sys não rastreia as flags CMAKE_* do .cargo/config.toml:
+      # sem o clean, o rust-cache traria um whisper.cpp compilado com flags antigas.
+      - name: Limpar o whisper.cpp do cache
+        run: cargo clean -p whisper-rs-sys --release
+
       # Fase 1: modelo base embutido para o self-test em CPU. O modelo grande e o
       # Vulkan entram na Fase 7.
       - name: Build
@@ -34,6 +39,9 @@ jobs:
 
       - name: Smoke test
         shell: pwsh
+        env:
+          # Otimizado, o whisper.cpp transcreve a amostra em poucos segundos; sem /O2 levava 48 s.
+          SCRIBA_SELF_TEST_MAX_SECS: "20"
         run: |
           Copy-Item C:\t\release\scriba.exe scriba.exe
           .\scriba.exe --self-test

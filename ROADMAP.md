@@ -13,9 +13,9 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | 2 | Esqueleto do app e design system | Concluída |
 | 3 | Fila de jobs e upload | Concluída |
 | 3.5 | Build nativo mais rápido | Concluída |
-| 4 | Transcrição de arquivos (MVP) | Não iniciada |
-| 5 | Gravação ao vivo | Não iniciada |
-| 6 | Compactação de vídeo e áudio | Não iniciada |
+| 4 | Transcrição de arquivos (MVP) | Em andamento |
+| 5 | Compactação de vídeo e áudio | Não iniciada |
+| 6 | Gravação ao vivo | Não iniciada |
 | 7 | Robustez, empacotamento e entrega final | Não iniciada |
 
 Valores possíveis: Não iniciada, Em andamento, Concluída.
@@ -29,7 +29,7 @@ Valores possíveis: Não iniciada, Em andamento, Concluída.
   - Mudar o status para "Concluída".
   - Registrar as decisões e os números medidos no [Registro de decisões](#registro-de-decisões).
   - Atualizar o aviso de estado do `README.md` (o que o app já faz).
-- **A partir da Fase 1, uma branch e um PR por fase**, com o CI verde antes do merge.
+- **A partir da Fase 1, uma branch e um PR por fase**, com o CI verde antes do merge. Quando o plano da fase a divide em etapas, cada etapa tem a própria branch e o próprio PR, em sequência.
 - **Definition of Done:** veja [Qualidade e testes](#qualidade-e-testes).
 - Se um spike ou um teste derrubar uma decisão (por exemplo, se o exe único se mostrar inviável), este roadmap é revisado antes de seguir.
 
@@ -38,7 +38,8 @@ Valores possíveis: Não iniciada, Em andamento, Concluída.
 Decisões de produto:
 
 - **Objetivo:** gravar, compactar e transcrever. Os três são núcleo.
-- **Saída:** a transcrição em texto de tudo que foi falado, venha de áudio, de vídeo ou da gravação ao vivo. O vídeo **não** recebe legendas.
+- **Fluxo padrão:** receber um arquivo ou gravar → extrair o áudio → transcrever → compactar quando valer a pena. Não há opções para escolher: todo envio e toda gravação passam pelo fluxo inteiro. A compactação vem depois da transcrição, para o texto sair primeiro, e só acontece quando reduz o arquivo de fato.
+- **Saída:** a transcrição de tudo que foi falado, venha de áudio, de vídeo ou da gravação ao vivo, em `.txt` e `.md`. O vídeo **não** recebe legendas.
 - **Uso não comercial:** o libx264 (GPL) é permitido.
 - **Modelo de IA invisível:** o usuário nunca vê, escolhe nem baixa o modelo. Ele vem embutido no executável e funciona offline.
 - **Código no GitHub, com CI/CD.**
@@ -86,7 +87,7 @@ O PRD original (codinome "MediaPipe Core") propõe um monólito em Rust: Axum + 
 ### Ordem das fases
 
 - A transcrição vem antes da gravação, porque a gravação depende dela.
-- A gravação vem antes da compactação de vídeo, porque já entrega a compactação do áudio gravado.
+- A compactação vem logo depois da transcrição e antes da gravação: ela é um passo automático do fluxo padrão dos envios, e a gravação reaproveita a compactação do áudio.
 
 ## Decisões de arquitetura
 
@@ -99,8 +100,8 @@ O PRD original (codinome "MediaPipe Core") propõe um monólito em Rust: Axum + 
 | Captura | `cpal` (WASAPI): mic e loopback em trilhas separadas, WAV mono 16-bit gravado no disco | À prova de crash. Ocupa ~345 MB/h por trilha até a compactação |
 | Web | `axum` 0.8 + `askama` + htmx 2 + Tailwind v4 compilado + fonte Inter (substituta do SF Pro indicada pelo design doc), tudo embutido | Nenhum arquivo solto. Funciona offline |
 | Estado | Fila em memória (`Arc<RwLock<HashMap>>` + `mpsc`), mais um manifesto `job.json` por saída | O histórico sobrevive a reinícios sem precisar de banco |
-| Saídas | `Documentos\Scriba\AAAA-MM-DD HHmm - nome\` (`transcricao.txt`, `audio.m4a`/`video.mp4`). Temporários em `%LOCALAPPDATA%\Scriba` | Todos os caminhos são configuráveis, o que deixa os testes isolados |
-| Compressão | Vídeo: x264 CRF ~26 (padrão) ou NVENC ("rápido"), até 1080p, áudio AAC. Áudio e gravações: AAC `.m4a` 96 kbps mono | Mantém o original se o ganho for menor que 5% |
+| Saídas | `Documentos\Scriba\AAAA-MM-DD HHmm - nome\` (`transcricao.txt`, `transcricao.md`, `audio.m4a`/`video.mp4`). Temporários em `%LOCALAPPDATA%\Scriba` | Todos os caminhos são configuráveis, o que deixa os testes isolados |
+| Compressão | Passo automático do fluxo, depois da transcrição. Vídeo: x264 CRF ~26 (padrão) ou NVENC ("rápido"), até 1080p, áudio AAC. Áudio e gravações: AAC `.m4a` 96 kbps mono | Só compacta quando vale a pena (pela taxa de bits e pela resolução do original) e mantém o original se o ganho for menor que 5% |
 | Testabilidade | Traits `Pipeline` (Fase 3), `Transcriber`, `MediaEngine`, `AudioSource` e `Clock`. Feature `test-support` com fakes e as flags `--fake-pipeline` e `--fake-audio`, fora do release | Toda a lógica roda no CI, sem placa de som nem GPU |
 
 ## Arquitetura
@@ -112,8 +113,8 @@ Navegador (HTMX)  ⇄  Axum @127.0.0.1 [token + Host/Origin]
                  JobStore (HashMap em memória) ──mpsc──▶ Worker (thread dedicada, 1 job por vez)
                         ▲                                   ├─ media::extract_audio  (FFmpeg → 16 kHz mono f32)
                         │                                   ├─ asr::transcribe       (whisper + VAD, progresso/cancelar)
-                        │                                   ├─ transcript::write     (.txt com [hh:mm:ss] e Você/Outros)
-                        │                                   └─ media::compress       (H.264/AAC)
+                        │                                   ├─ transcript::write     (.txt e .md com [hh:mm:ss] e Você/Outros)
+                        │                                   └─ media::compress       (H.264/AAC, quando vale a pena)
                  Recorder (AudioSource: cpal mic + loopback + silêncio na saída | fake nos testes)
                    └─ ring buffers → thread de escrita → mic.wav / sistema.wav ──(Parar)──▶ novo job
 ```
@@ -303,23 +304,26 @@ A versão debug, cerca de 38% do passo, nunca é usada: o Rust linka sempre o CR
 
 ### Fase 4 — Transcrição de arquivos (MVP)
 
-Base no PRD: Sprint 3.1 e Sprint 4. Objetivo: qualquer áudio ou vídeo vira texto em pt-BR. É a primeira entrega de valor.
+Base no PRD: Sprint 3.1 e Sprint 4. Objetivo: qualquer áudio ou vídeo vira texto em pt-BR, em `.txt` e `.md`. É a primeira entrega de valor.
+
+O plano da fase a divide em seis etapas, cada uma com o próprio PR: 4.1 whisper otimizado no release e investigação da CPU; 4.2 `media` e `transcript`; 4.3 `asr` e benchmark small × base; 4.4 pipeline real no app; 4.5 UI do resultado; 4.6 release, medições de 1 h e fechamento.
 
 **Entregas:**
 
-- [ ] `media::extract_audio`: melhor faixa de áudio → 16 kHz mono f32, com progresso por pts e erros amigáveis (ex.: "arquivo sem áudio").
+- [ ] `media::probe` e `media::extract_audio`: duração, taxa de bits e resolução do original; melhor faixa de áudio → 16 kHz mono f32, sem decodificar o vídeo, com progresso por pts e erros amigáveis (ex.: "arquivo sem áudio").
 - [ ] `asr`:
   - Contexto carregado sob demanda e liberado após 10 min ocioso.
   - Idioma `pt`, VAD Silero e `no_context`.
-  - Threads = núcleos − 2.
+  - Threads = núcleos − 2, salvo se a investigação da CPU mostrar uma regra melhor.
   - Progresso, cancelamento e filtro de frases-fantasma.
 - [ ] Escolha do backend (achado do spike A: só CPU com o modelo grande leva ~8 h para 1 h de áudio):
   - Usar a GPU **dedicada** quando houver, e não o dispositivo Vulkan 0, que costuma ser a integrada. Se não houver dedicada, usar a integrada.
   - Sem GPU Vulkan, transcrever na CPU com um **modelo menor embutido**. A escolha entre `small` e `base` sai de um benchmark de precisão × tempo nas fixtures. O custo é o exe crescer ~60–190 MB.
-  - Antes de fechar o fallback, investigar a lentidão da CPU (~87 s para 10,9 s), comparando com o whisper.cpp oficial e testando threads e OpenMP.
+  - Antes de fechar o fallback, investigar a lentidão da CPU (~87 s para 10,9 s), comparando com o whisper.cpp oficial e testando threads e OpenMP. No planejamento, a leitura do `CMakeCache.txt` mostrou que o whisper.cpp do release compila sem `/O2` (veja o Registro de decisões).
   - Mostrar na UI qual backend está em uso e uma estimativa de tempo antes de começar.
-- [ ] `transcript`: parágrafos (pausa > 1,5 s quebra), `[hh:mm:ss]` em cada parágrafo e cabeçalho (origem, data, duração). Gera `transcricao.txt` e `job.json`.
-- [ ] UI: leitor da transcrição, Copiar texto, Baixar .txt e Abrir pasta.
+- [ ] `transcript`: parágrafos (pausa > 1,5 s quebra), `[hh:mm:ss]` em cada parágrafo e cabeçalho (origem, data, duração). Gera `transcricao.txt`, `transcricao.md` e `job.json`.
+- [ ] Fluxo automático: o envio deixa de ter as opções "Transcrever" e "Compactar". Todo job extrai o áudio e transcreve; a compactação entra na Fase 5, depois da transcrição.
+- [ ] UI: leitor da transcrição, Copiar texto, Baixar .txt, Baixar .md e Abrir pasta.
 - [ ] Herdado da Fase 3:
   - O pipeline real substitui o falso no app; o falso vai para a feature `test-support`, com a flag `--fake-pipeline` para o E2E.
   - "Tentar de novo" no job que falhou (o envio fica guardado até a nova tentativa).
@@ -328,23 +332,50 @@ Base no PRD: Sprint 3.1 e Sprint 4. Objetivo: qualquer áudio ou vídeo vira tex
 
 **Testes:**
 
-- [ ] Unitários: parágrafos, formato de tempo, filtro de frases-fantasma e cabeçalho (snapshots).
+- [ ] Unitários: parágrafos, formato de tempo, filtro de frases-fantasma, cabeçalho e o `.md` (snapshots).
 - [ ] Integração com o modelo pequeno:
   - Fixtures MP4, MP3, M4A, OGG e WAV → palavras-chave.
   - Silêncio puro → texto vazio, sem frases-fantasma.
   - Cancelar no meio interrompe a transcrição.
   - Arquivo sem áudio → erro amigável.
-- [ ] E2E: upload → texto visível → copiar → .txt baixado com o conteúdo certo.
+- [ ] E2E: upload → texto visível → copiar → .txt e .md baixados com o conteúdo certo.
 - [ ] Unitário: a escolha do backend prefere GPU dedicada, depois integrada, depois CPU com o modelo menor (com uma lista de dispositivos falsa).
 - [ ] Local: benchmark com 1 h de áudio real em cada backend (RTX, Intel integrada e só CPU).
+- [ ] Local: "compactar antes acelera?": extrair o áudio direto de 1 h de vídeo real, contra recodificar o mesmo vídeo com x264 e com NVENC (pelo `ffmpeg` CLI). O resultado alimenta a regra de "vale a pena" da Fase 5.
 
 **Pronto quando:**
 
-- [ ] Arquivos reais (MP4 do Teams, MP3, M4A, WAV, OGG) viram texto pt-BR correto.
+- [ ] Arquivos reais (MP4 do Teams, MP3, M4A, WAV, OGG) viram texto pt-BR correto, em `.txt` e `.md`.
 - [ ] O tempo para transcrever 1 h de áudio na RTX 3050 está registrado.
 - [ ] Metas para 1 h de áudio: ≤ 10 min na RTX 3050 e ≤ 1 h só na CPU (com o modelo menor). Os tempos medidos nos três backends ficam no registro de decisões.
 
-### Fase 5 — Gravação ao vivo
+### Fase 5 — Compactação de vídeo e áudio
+
+Base no PRD: Sprint 3.2 e Sprint 4.2. Objetivo: vídeos e áudios enviados ficam menores, num passo automático do fluxo padrão, depois da transcrição.
+
+**Entregas:**
+
+- [ ] `media::compress_video`:
+  - Escala até 1080p, mantendo a proporção, com dimensões pares.
+  - Codifica com x264 CRF 26 (padrão) ou NVENC p5 CQ 28.
+  - Áudio AAC, MP4 `faststart`, progresso e cancelamento.
+- [ ] `media::compress_audio` para áudios enviados (reaproveitado pela gravação, na Fase 6).
+- [ ] Passo automático, sem opção na tela: roda depois da transcrição e só quando vale a pena, pela taxa de bits e pela resolução do original. A regra parte das medições da Fase 4.
+- [ ] O original é mantido quando o ganho for menor que 5%.
+- [ ] UI: tamanho antes → depois (−xx%).
+
+**Testes:**
+
+- [ ] Unitários: regra de quando vale a pena, regra dos 5%, cálculo de dimensões e preset → parâmetros.
+- [ ] Integração: vídeo sai H.264 com as dimensões e a duração esperadas (±0,1 s) e menor que o original; áudio sai AAC; cancelar no meio interrompe.
+- [ ] E2E: upload → tamanho antes/depois na tela.
+- [ ] Local: NVENC.
+
+**Pronto quando:**
+
+- [ ] Uma gravação de 1 h do Teams fica menor e abre no Media Player e no VLC.
+
+### Fase 6 — Gravação ao vivo
 
 Base no PRD: Sprint 5. Objetivo: um clique grava o microfone e o som do PC; ao parar, saem a transcrição rotulada "Você" / "Outros" e o áudio compactado.
 
@@ -361,9 +392,9 @@ Base no PRD: Sprint 5. Objetivo: um clique grava o microfone e o som do PC; ao p
 - [ ] Rotas `POST /api/record/start`, `POST /api/record/stop` e `GET /api/record/status`.
 - [ ] UI: tile escuro com botão grande e barra fixa "● Gravando 00:12:34 · Parar".
 - [ ] Job de gravação:
-  - Mixdown para `audio.m4a`.
+  - Mixdown para `audio.m4a`, com o `media::compress_audio` da Fase 5.
   - Transcrição de cada trilha, mesclada por tempo com os rótulos Você/Outros.
-  - Remoção do eco e geração do `transcricao.txt`.
+  - Remoção do eco e geração do `transcricao.txt` e do `transcricao.md`.
   - WAVs apagados após o sucesso.
 - [ ] Robustez:
   - Dispositivo removido: salva o que foi gravado.
@@ -384,31 +415,6 @@ Base no PRD: Sprint 5. Objetivo: um clique grava o microfone e o som do PC; ao p
 
 - [ ] Falar com música ou reunião tocando, clicar em Parar e receber o texto com as duas vozes rotuladas.
 - [ ] 15 s de silêncio no meio da gravação não desalinham as trilhas.
-
-### Fase 6 — Compactação de vídeo e áudio
-
-Base no PRD: Sprint 3.2 e Sprint 4.2. Objetivo: vídeos e áudios enviados ficam menores.
-
-**Entregas:**
-
-- [ ] `media::compress_video`:
-  - Escala até 1080p, mantendo a proporção, com dimensões pares.
-  - Codifica com x264 CRF 26 (padrão) ou NVENC p5 CQ 28.
-  - Áudio AAC, MP4 `faststart`, progresso e cancelamento.
-- [ ] `media::compress_audio` (reaproveitado da Fase 5) para áudios enviados.
-- [ ] O original é mantido quando o ganho for menor que 5%.
-- [ ] UI: tamanho antes → depois (−xx%).
-
-**Testes:**
-
-- [ ] Unitários: regra dos 5%, cálculo de dimensões e preset → parâmetros.
-- [ ] Integração: vídeo sai H.264 com as dimensões e a duração esperadas (±0,1 s) e menor que o original; áudio sai AAC; cancelar no meio interrompe.
-- [ ] E2E: upload com "Compactar" → tamanho antes/depois na tela.
-- [ ] Local: NVENC.
-
-**Pronto quando:**
-
-- [ ] Uma gravação de 1 h do Teams fica menor e abre no Media Player e no VLC.
 
 ### Fase 7 — Robustez, empacotamento e entrega final
 
@@ -531,6 +537,14 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-19 | Fase 3.5 | CI na `main` toda segunda às 06:00 UTC (`schedule`) e sob demanda (`workflow_dispatch`) | O GitHub apaga um cache sem acesso por 7 dias; o run também pega quebras do runner e avisos novos do RustSec |
 | 2026-10-19 | Fase 3.5 | Medições: localmente o build frio do FFmpeg leva 8,0 min (x264 1,1 min, FFmpeg 6,4 min) e o `vcpkg_installed` cai de 428 para 217 MB; o exe de release segue com 85 MB, o `--self-test` passa e o `dumpbin` só lista DLLs do Windows. No CI do PR, `setup-native` frio em 16,3 min (antes 29,5 min num runner de velocidade parecida, −45%), com FFmpeg em 12 min e x264 em 2,4 min; job `checks` em 25,6 min; cache do FFmpeg de 77 para 61 MB. O único build de debug que sobra é o do `pkgconf` do host (15 s) | Critério da Fase 3.5 |
 | 2026-10-19 | Fase 3.5 | Medições na `main`: o push do merge refez o build frio (FFmpeg 12 min, x264 2,4 min; `checks` em 26 min) e o run por `workflow_dispatch`, o mesmo workflow do agendado, passou em 8 min com o cache | Custo único previsto: um build frio na branch e outro na `main` |
+| 2026-10-19 | Planejamento | Saída em `.txt` e `.md`: os dois vão para a pasta da saída, com "Baixar .txt" e "Baixar .md" no card e no leitor | Pedido do usuário |
+| 2026-10-19 | Planejamento | Compactação como passo automático do fluxo padrão: o envio deixa de ter as opções "Transcrever" e "Compactar". A compactação roda depois da transcrição e só quando vale a pena (taxa de bits e resolução do original, mais a regra dos 5%) | Compactar não é uma funcionalidade à parte. Compactar antes não acelera a transcrição: o whisper só usa o áudio, extraído direto do original sem decodificar o vídeo, e o tempo depende da duração do áudio, não do tamanho do arquivo |
+| 2026-10-19 | Planejamento | Troca de ordem: a Compactação vira a Fase 5 e a Gravação, a Fase 6 | A compactação é um passo do fluxo padrão dos envios, e a gravação reaproveita a compactação do áudio |
+| 2026-10-19 | Fase 4 | A fase é dividida em seis etapas, cada uma com o próprio PR: 4.1 whisper otimizado e investigação da CPU, 4.2 `media` e `transcript`, 4.3 `asr` e benchmark, 4.4 pipeline real, 4.5 UI do resultado, 4.6 release e fechamento | Fase grande; cada etapa fecha com o CI verde |
+| 2026-10-19 | Fase 4 | Corrige o achado (2) do spike A: o whisper.cpp do release compilava sem otimização. O cmake-rs descarta as flags `/O*` e, no gerador do Visual Studio, sobrescreve `CMAKE_<LANG>_FLAGS_RELEASE` quando o whisper-rs-sys fixa `CMAKE_BUILD_TYPE=Release`; o MSVC caía no `/Od`. No debug a variável sobrescrita é outra e o `/O2` sobrevivia. Correção: `CMAKE_C_FLAGS_RELEASE`/`CMAKE_CXX_FLAGS_RELEASE = "/O2 /Ob2 /DNDEBUG"` no `.cargo/config.toml`; o `release.yml` limpa o `whisper-rs-sys` antes do build e o self-test falha acima de 20 s (`SCRIBA_SELF_TEST_MAX_SECS`) | `CMakeCache.txt` do release sem `/O2`; os ~87 s do spike A e os 48 s do self-test no runner eram isso |
+| 2026-10-19 | Fase 4 | Medições na CPU, `fala.wav` (10,9 s), 18 threads, na tomada e em "Melhor desempenho", antes → depois da correção: base 4,27 → 0,74 s; small 15,74 → 2,03 s; large-v3-turbo 82,1 → 9,06 s (5,8× a 9,1×). Contra o whisper-cli oficial 1.8.3 (com OpenMP): small 1,95 s e large 9,35 s (diferença ≤ 4%); base 0,60 s (+0,14 s). Na bateria e em "Melhor eficiência", os mesmos testes levam ~2× mais | Critério da investigação: nosso build a ≤ 15% da referência (o base passa por fração de segundo). OpenMP descartado: no MSVC exige o `vcomp140.dll` |
+| 2026-10-19 | Fase 4 | Threads = núcleos lógicos − 2 continua (18 nesta máquina): melhor ou empatado em base, small e large em 65 s de áudio; 20 threads piora todos (~15%). `flash_attn` desligado na CPU e na Intel (CPU 10–25% mais lenta; Intel até 3,7× mais lenta) e ligado na RTX (large 12,5 → 1,29 s, ~51× tempo real) | Varredura 4–20 threads × flash, `bench.rs` com `SCRIBA_BENCH_REPEAT=6` |
+| 2026-10-19 | Fase 4 | RTF em 65 s de áudio: CPU base 0,041, small 0,118, large 0,435; Intel large 0,53, small 0,17; RTX large 0,020 com flash | Entrada do benchmark small × base (4.3) e do ponto de controle: o large na CPU já fica abaixo de RTF 0,5 |
 
 ## Referências verificadas
 

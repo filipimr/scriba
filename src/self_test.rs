@@ -24,37 +24,66 @@ const KEYWORDS: &[&str] = &[
 ];
 const MIN_HITS: usize = 3;
 
+/// Variável com o tempo máximo da transcrição, em segundos. Só o `release.yml` a define:
+/// um whisper.cpp compilado sem otimização leva dezenas de segundos e falha aqui.
+pub const MAX_SECS_VAR: &str = "SCRIBA_SELF_TEST_MAX_SECS";
+
 pub struct Report {
     pub text: String,
     pub transcribe: Duration,
     pub encode: Duration,
+    /// Recursos de CPU com que o whisper.cpp foi compilado.
+    pub system: &'static str,
 }
 
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "transcrição {:.1?}, x264 {:.1?} → {}",
+            "transcrição {:.1?}, x264 {:.1?} → {}\nwhisper.cpp: {}",
             self.transcribe,
             self.encode,
-            self.text.trim()
+            self.text.trim(),
+            self.system.trim()
         )
     }
 }
 
 /// Usa o modelo e a amostra embutidos; sem a feature `embedded-test-model`, lê de
-/// `models/` e `tests/fixtures/` do repositório.
+/// `models/` e `tests/fixtures/` do repositório. Falha se a transcrição passar do limite
+/// de [`MAX_SECS_VAR`], quando definido.
 pub fn run_default() -> anyhow::Result<Report> {
-    match (scriba_model::TEST_WHISPER, scriba_model::TEST_SAMPLE) {
-        (Some(model), Some(sample)) => run(model, sample),
+    let report = match (scriba_model::TEST_WHISPER, scriba_model::TEST_SAMPLE) {
+        (Some(model), Some(sample)) => run(model, sample)?,
         _ => {
             let root = Path::new(env!("CARGO_MANIFEST_DIR"));
             let model = std::fs::read(root.join("models/ggml-base-q5_1.bin"))
                 .context("modelo não embutido: rode `cargo xtask model --only base`")?;
             let sample = std::fs::read(root.join("tests/fixtures/fala.wav"))?;
-            run(&model, &sample)
+            run(&model, &sample)?
         }
-    }
+    };
+    check_limit(
+        report.transcribe,
+        std::env::var(MAX_SECS_VAR).ok().as_deref(),
+    )?;
+    Ok(report)
+}
+
+fn check_limit(transcribe: Duration, max_secs: Option<&str>) -> anyhow::Result<()> {
+    let Some(max) = max_secs else {
+        return Ok(());
+    };
+    let max: f64 = max
+        .parse()
+        .with_context(|| format!("{MAX_SECS_VAR} inválido: {max:?}"))?;
+    ensure!(
+        transcribe.as_secs_f64() <= max,
+        "a transcrição levou {:.1} s, acima do limite de {max} s ({MAX_SECS_VAR}): \
+         o whisper.cpp pode ter sido compilado sem otimização",
+        transcribe.as_secs_f64()
+    );
+    Ok(())
 }
 
 pub fn run(model: &[u8], wav: &[u8]) -> anyhow::Result<Report> {
@@ -79,6 +108,7 @@ pub fn run(model: &[u8], wav: &[u8]) -> anyhow::Result<Report> {
         text,
         transcribe,
         encode: t1.elapsed(),
+        system: whisper_rs::print_system_info(),
     })
 }
 
@@ -205,13 +235,28 @@ mod tests {
     }
 
     #[test]
-    fn report_mostra_texto_e_tempos() {
+    fn report_mostra_texto_tempos_e_recursos_da_cpu() {
         let r = Report {
             text: " bom dia ".into(),
             transcribe: Duration::from_millis(1500),
             encode: Duration::from_millis(200),
+            system: "CPU : AVX2 = 1 | ",
         };
         let s = r.to_string();
         assert!(s.contains("bom dia") && s.contains("x264"), "{s}");
+        assert!(s.ends_with("whisper.cpp: CPU : AVX2 = 1 |"), "{s}");
+    }
+
+    #[test]
+    fn limite_de_tempo_so_quando_definido() {
+        let t = Duration::from_secs_f64(12.5);
+        assert!(check_limit(t, None).is_ok());
+        assert!(check_limit(t, Some("20")).is_ok());
+        let err = check_limit(t, Some("10")).unwrap_err().to_string();
+        assert!(
+            err.contains("12.5 s") && err.contains("sem otimização"),
+            "{err}"
+        );
+        assert!(check_limit(t, Some("vinte")).is_err());
     }
 }

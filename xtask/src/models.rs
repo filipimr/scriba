@@ -22,6 +22,12 @@ pub const MODELS: &[Model] = &[
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin",
         sha256: "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
     },
+    // Candidato a modelo da CPU (benchmark small × base da Fase 4).
+    Model {
+        file: "ggml-small-q5_1.bin",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",
+        sha256: "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+    },
     Model {
         file: "ggml-silero-v6.2.0.bin",
         url: "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",
@@ -29,11 +35,12 @@ pub const MODELS: &[Model] = &[
     },
 ];
 
+/// `only`: textos separados por vírgula; baixa os modelos cujo nome contém algum deles.
 pub fn download(dir: &Path, only: Option<&str>) -> anyhow::Result<()> {
     fs::create_dir_all(dir)?;
     let selected: Vec<_> = MODELS
         .iter()
-        .filter(|m| only.is_none_or(|o| m.file.contains(o)))
+        .filter(|m| only.is_none_or(|o| o.split(',').any(|o| m.file.contains(o.trim()))))
         .collect();
     if selected.is_empty() {
         bail!("nenhum modelo corresponde a {only:?}");
