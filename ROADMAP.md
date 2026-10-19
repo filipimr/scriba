@@ -12,7 +12,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | 1 | CI/CD no GitHub | Concluída |
 | 2 | Esqueleto do app e design system | Concluída |
 | 3 | Fila de jobs e upload | Concluída |
-| 3.5 | Build nativo mais rápido | Não iniciada |
+| 3.5 | Build nativo mais rápido | Em andamento |
 | 4 | Transcrição de arquivos (MVP) | Não iniciada |
 | 5 | Gravação ao vivo | Não iniciada |
 | 6 | Compactação de vídeo e áudio | Não iniciada |
