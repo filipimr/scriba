@@ -10,20 +10,45 @@
     <p id="record-soon" class="record-hint">A gravação chega em breve. Use fone de ouvido para não duplicar falas.</p>
   </section>
 
-  <section class="dropzone max-md:p-md" aria-labelledby="drop-title">
+  {#- As opções vêm antes do arquivo no formulário: o servidor recusa o envio sem opção
+      antes de gravar o arquivo. #}
+  <form id="envio" class="dropzone max-md:p-md" aria-labelledby="drop-title"
+        hx-post="/api/jobs" hx-encoding="multipart/form-data" hx-target="#jobs" hx-swap="afterbegin"
+        data-erro-formato="{{ format_error }}" data-erro-opcoes="{{ no_options }}">
     {% include "icons/upload.svg" %}
-    <h2 id="drop-title" class="dropzone-title">Solte um vídeo ou áudio aqui</h2>
-    <span class="text-caption">ou</span>
-    <button class="btn btn-primary" type="button" disabled>Escolher arquivo</button>
-    <div class="flex flex-wrap justify-center gap-xs">
-      <span class="option-toggle">Transcrever</span>
-      <span class="option-toggle">Compactar</span>
+    <div class="dropzone-idle">
+      <h2 id="drop-title" class="dropzone-title">Solte um vídeo ou áudio aqui</h2>
+      <span class="text-caption">ou</span>
+      <label for="arquivo" class="btn btn-primary">Escolher arquivo</label>
+      <fieldset class="flex flex-wrap justify-center gap-xs">
+        <legend class="sr-only">O que fazer com o arquivo</legend>
+        <label class="option-toggle">
+          <input class="sr-only" type="checkbox" name="transcrever" value="1" checked>
+          {%- include "icons/check.svg" %}Transcrever
+        </label>
+        <label class="option-toggle">
+          <input class="sr-only" type="checkbox" name="compactar" value="1">
+          {%- include "icons/check.svg" %}Compactar
+        </label>
+      </fieldset>
+      <input id="arquivo" class="sr-only" type="file" name="arquivo" multiple accept="{{ accept }}">
     </div>
-  </section>
+    <div class="dropzone-uploading">
+      <p class="dropzone-file"></p>
+      <progress class="progress-bar" max="100" value="0" aria-label="Envio do arquivo"></progress>
+    </div>
+    <div id="erro-envio" class="w-full"></div>
+  </form>
 </div>
+<template id="modelo-erro"><p class="alert-inline" role="alert">{% include "icons/circle-alert.svg" %}<span></span></p></template>
 
-<section class="mt-xxl" aria-labelledby="recent-title">
+<section class="recentes mt-xxl" aria-labelledby="recent-title">
   <h2 id="recent-title" class="text-headline">Recentes</h2>
+  <div id="jobs" class="job-list">
+    {%- for job in jobs %}
+    {% include "partials/job_card.html" %}
+    {%- endfor %}
+  </div>
   <div class="empty-state">
     {% include "icons/inbox.svg" %}
     <p>Nada por aqui ainda. Grave uma reunião ou envie um arquivo.</p>

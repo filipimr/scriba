@@ -5,6 +5,7 @@ use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 
+use super::jobs::{self, Card};
 use super::{AppState, assets};
 use crate::config::Theme;
 
@@ -36,6 +37,10 @@ impl Layout {
 struct IndexPage {
     layout: Layout,
     theme: Theme,
+    jobs: Vec<Card>,
+    accept: String,
+    format_error: String,
+    no_options: &'static str,
 }
 
 #[derive(Template)]
@@ -55,6 +60,10 @@ pub async fn index(State(state): State<AppState>) -> Response {
     render(&IndexPage {
         layout: Layout::new(),
         theme: state.config().theme,
+        jobs: state.jobs.list().iter().map(Card::new).collect(),
+        accept: jobs::accept(),
+        format_error: jobs::format_error(),
+        no_options: jobs::NO_OPTIONS,
     })
 }
 

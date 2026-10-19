@@ -77,6 +77,8 @@ fn run_one(jobs: &Jobs, id: JobId, pipeline: &dyn Pipeline) {
         progress.apply(id, Event::Progress(stage, pct));
     });
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| pipeline.run(&job, &ctx)));
+    // Apaga antes de publicar o fim: quem vê o job terminado já não acha o envio.
+    remove_quietly(&job.input);
     jobs.apply(
         id,
         match outcome {
@@ -84,5 +86,4 @@ fn run_one(jobs: &Jobs, id: JobId, pipeline: &dyn Pipeline) {
             Err(_) => Event::Panicked,
         },
     );
-    remove_quietly(&job.input);
 }
