@@ -25,7 +25,12 @@ enum Cmd {
         only: Option<String>,
     },
     /// Gera as fixtures de fala pt-BR em tests/fixtures/ com a voz Maria.
-    Fixtures,
+    Fixtures {
+        /// Gera só estas fixtures, por nome de arquivo separado por vírgula (ex.:
+        /// `fala.mkv,pausas.wav`); as derivadas reaproveitam o `fala.wav` existente.
+        #[arg(long)]
+        only: Option<String>,
+    },
     /// Gera ui/tokens.css do DESIGN-scriba.md e compila assets/app.css com o Tailwind.
     Css {
         /// Só confere se os arquivos versionados estão em dia (CI).
@@ -37,7 +42,9 @@ enum Cmd {
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
         Cmd::Model { only } => models::download(&root().join("models"), only.as_deref()),
-        Cmd::Fixtures => fixtures::generate(&root().join("tests").join("fixtures")),
+        Cmd::Fixtures { only } => {
+            fixtures::generate(&root().join("tests").join("fixtures"), only.as_deref())
+        }
         Cmd::Css { check } => css::run(&root(), check),
     }
 }
