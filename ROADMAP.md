@@ -488,7 +488,8 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-19 | Fase 3 | E2E com um `scriba.exe` por teste (fixture `scriba`), no lugar do `global-setup` compartilhado | Mitigação "diretórios temporários por teste"; nenhum estado vaza entre testes |
 | 2026-10-19 | Fase 3 | Piso de cobertura sobe de 70% para 85% | A Fase 2 terminou com 92,6% das linhas cobertas no CI |
 | 2026-10-19 | Fase 3 | Medição: upload de 2 GB pelo exe de debug em 12,4 s (165 MB/s), com o pico de working set indo de 14 MB para 19 MB (+5 MB). O CI repete com 256 MB e falha acima de +100 MB | Critério "upload de 2 GB com RAM estável" |
-| 2026-10-19 | Fase 3 | `.gitattributes` com `* text=auto eol=lf`: todo texto sai com LF no checkout, em qualquer máquina | No runner, o `core.autocrlf` trocava os SVGs embutidos por CRLF e quebrava o snapshot HTML do card; os assets do exe ficam idênticos entre máquinas |
+| 2026-10-19 | Fase 3 | `.gitattributes` com `* text=auto eol=lf`: todo texto sai com LF no checkout, em qualquer máquina | No runner, o `core.autocrlf` trocava os SVGs embutidos por CRLF e quebrava o snapshot HTML do card; os assets do exe ficam idênticos entre máquinas. Custo único: o `vcpkg.json` passa a sair com LF, o hash da chave do cache muda e o FFmpeg é recompilado uma vez na branch e uma na `main` |
+| 2026-10-19 | Fase 3 | Medição no CI do PR: job `checks` em 39 min, dos quais 29,5 min recompilando o FFmpeg (cache refeito pelo `.gitattributes`); sem isso, ~9,5 min, com testes e cobertura em ~3 min e os 16 testes E2E em ~1 min. Cobertura de linhas: 94,1% (piso de 85%) | Com cache, ainda bem abaixo da meta de 20 min |
 
 ## Referências verificadas
 
