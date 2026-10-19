@@ -61,7 +61,7 @@ O build é nativo e estático (FFmpeg, whisper.cpp e o CRT dentro do exe), por i
 2. Compile o FFmpeg estático uma vez (cerca de 12–20 min; depois fica em cache):
 
    ```powershell
-   C:\dev\vcpkg\vcpkg.exe install --triplet x64-windows-static --x-install-root=vcpkg_installed
+   C:\dev\vcpkg\vcpkg.exe install --triplet x64-windows-static-release --x-install-root=vcpkg_installed
    ```
 
 3. Baixe os modelos com `cargo xtask model` (ou só o pequeno, usado nos testes, com `--only base`).

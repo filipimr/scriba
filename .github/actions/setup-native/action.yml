@@ -34,7 +34,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: vcpkg_installed
-        key: vcpkg-x64-windows-static-${{ hashFiles('vcpkg.json') }}
+        key: vcpkg-x64-windows-static-release-${{ hashFiles('vcpkg.json', 'triplets/**') }}
 
     - name: FFmpeg estático (vcpkg)
       if: steps.vcpkg-cache.outputs.cache-hit != 'true'
@@ -43,7 +43,7 @@ runs:
         # Clone completo: o modo manifesto resolve o builtin-baseline pelo histórico do git.
         git clone https://github.com/microsoft/vcpkg $env:VCPKG_ROOT
         & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
-        & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet x64-windows-static --x-install-root=vcpkg_installed
+        & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet x64-windows-static-release --x-install-root=vcpkg_installed
         if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
     - name: Salvar cache do FFmpeg mesmo se o job falhar depois
@@ -51,7 +51,7 @@ runs:
       uses: actions/cache/save@v4
       with:
         path: vcpkg_installed
-        key: vcpkg-x64-windows-static-${{ hashFiles('vcpkg.json') }}
+        key: vcpkg-x64-windows-static-release-${{ hashFiles('vcpkg.json', 'triplets/**') }}
 
     - name: Cache do Cargo
       uses: Swatinem/rust-cache@v2
