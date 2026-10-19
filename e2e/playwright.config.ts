@@ -1,11 +1,10 @@
 import { defineConfig } from "@playwright/test";
 
-// O global-setup sobe o scriba.exe real (--no-open, porta 0, diretório temporário) e
-// publica a URL de entrada em SCRIBA_URL. Os testes rodam em série: compartilham a
-// instância e o tema salvo nela.
+// A fixture `scriba` (fixtures.ts) sobe um scriba.exe real por teste (--no-open, porta 0,
+// diretório temporário). Os testes rodam em série para a medida de tempo do pipeline falso
+// não variar com a carga da máquina.
 export default defineConfig({
   testDir: "tests",
-  globalSetup: "./global-setup.ts",
   workers: 1,
   fullyParallel: false,
   retries: process.env.CI ? 2 : 0,
