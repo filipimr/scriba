@@ -1,0 +1,13 @@
+---
+source: src/transcript/tests.rs
+expression: "txt.replace(\"\\r\\n\", \"⏎\\n\")"
+---
+Arquivo: Reunião de orçamento.mp4⏎
+Data: 19/10/2026 14:30⏎
+Duração: 01:02:05⏎
+⏎
+[00:00:00] Bom dia. Vamos falar do *orçamento* de_2027.⏎
+⏎
+[00:00:08] Depois da pausa, [anexo] <a> `x` \ fim.⏎
+⏎
+[01:01:01] Até amanhã.⏎

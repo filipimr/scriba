@@ -310,7 +310,7 @@ O plano da fase a divide em seis etapas, cada uma com o próprio PR: 4.1 whisper
 
 **Entregas:**
 
-- [ ] `media::probe` e `media::extract_audio`: duração, taxa de bits e resolução do original; melhor faixa de áudio → 16 kHz mono f32, sem decodificar o vídeo, com progresso por pts e erros amigáveis (ex.: "arquivo sem áudio").
+- [x] `media::probe` e `media::extract_audio`: duração, taxa de bits e resolução do original; melhor faixa de áudio → 16 kHz mono f32, sem decodificar o vídeo, com progresso por pts e erros amigáveis (ex.: "arquivo sem áudio").
 - [ ] `asr`:
   - Contexto carregado sob demanda e liberado após 10 min ocioso.
   - Idioma `pt`, VAD Silero e `no_context`.
@@ -321,7 +321,7 @@ O plano da fase a divide em seis etapas, cada uma com o próprio PR: 4.1 whisper
   - Sem GPU Vulkan, transcrever na CPU com um **modelo menor embutido**. A escolha entre `small` e `base` sai de um benchmark de precisão × tempo nas fixtures. O custo é o exe crescer ~60–190 MB.
   - Antes de fechar o fallback, investigar a lentidão da CPU (~87 s para 10,9 s), comparando com o whisper.cpp oficial e testando threads e OpenMP. No planejamento, a leitura do `CMakeCache.txt` mostrou que o whisper.cpp do release compila sem `/O2` (veja o Registro de decisões).
   - Mostrar na UI qual backend está em uso e uma estimativa de tempo antes de começar.
-- [ ] `transcript`: parágrafos (pausa > 1,5 s quebra), `[hh:mm:ss]` em cada parágrafo e cabeçalho (origem, data, duração). Gera `transcricao.txt`, `transcricao.md` e `job.json`.
+- [x] `transcript`: parágrafos (pausa > 1,5 s quebra), `[hh:mm:ss]` em cada parágrafo e cabeçalho (origem, data, duração). Gera `transcricao.txt`, `transcricao.md` e `job.json`.
 - [ ] Fluxo automático: o envio deixa de ter as opções "Transcrever" e "Compactar". Todo job extrai o áudio e transcreve; a compactação entra na Fase 5, depois da transcrição.
 - [ ] UI: leitor da transcrição, Copiar texto, Baixar .txt, Baixar .md e Abrir pasta.
 - [ ] Herdado da Fase 3:
@@ -545,6 +545,9 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-19 | Fase 4 | Medições na CPU, `fala.wav` (10,9 s), 18 threads, na tomada e em "Melhor desempenho", antes → depois da correção: base 4,27 → 0,74 s; small 15,74 → 2,03 s; large-v3-turbo 82,1 → 9,06 s (5,8× a 9,1×). Contra o whisper-cli oficial 1.8.3 (com OpenMP): small 1,95 s e large 9,35 s (diferença ≤ 4%); base 0,60 s (+0,14 s). Na bateria e em "Melhor eficiência", os mesmos testes levam ~2× mais | Critério da investigação: nosso build a ≤ 15% da referência (o base passa por fração de segundo). OpenMP descartado: no MSVC exige o `vcomp140.dll` |
 | 2026-10-19 | Fase 4 | Threads = núcleos lógicos − 2 continua (18 nesta máquina): melhor ou empatado em base, small e large em 65 s de áudio; 20 threads piora todos (~15%). `flash_attn` desligado na CPU e na Intel (CPU 10–25% mais lenta; Intel até 3,7× mais lenta) e ligado na RTX (large 12,5 → 1,29 s, ~51× tempo real) | Varredura 4–20 threads × flash, `bench.rs` com `SCRIBA_BENCH_REPEAT=6` |
 | 2026-10-19 | Fase 4 | RTF em 65 s de áudio: CPU base 0,041, small 0,118, large 0,435; Intel large 0,53, small 0,17; RTX large 0,020 com flash | Entrada do benchmark small × base (4.3) e do ponto de controle: o large na CPU já fica abaixo de RTF 0,5 |
+| 2026-10-19 | Fase 4 | Etapa 4.2: `media` e `transcript` prontos, ainda fora do app. Os oito formatos das fixtures (MP4, MP3, M4A, OGG, MKV, MOV, M4A 48 kHz estéreo e WAV) dão 10,931 s extraídos, igual ao WAV. O resampler é esvaziado no fim (`flush` com o frame de saída já alocado; vazio, o swr recusa com "Output changed") e recriado se o formato muda no meio. Um pacote ruim é pulado; erro de leitura ou nenhuma amostra viram "Não consegui ler o áudio…". MP4 truncado sem o `moov` não abre e dá "Não reconheci…" | `tests/media.rs` |
+| 2026-10-19 | Fase 4 | O `probe` dá a duração do arquivo inteiro (contêiner), não só do áudio. O `fala.mp4` atual tem 13,7 s de vídeo para 10,9 s de áudio: o `-shortest` do xtask passava do áudio. As fixtures novas (`fala.mkv`, `fala.mov`) já nascem com o vídeo do tamanho do WAV; o `fala.mp4` não foi regerado | `ffprobe` das fixtures |
+| 2026-10-19 | Fase 4 | Formato da saída: `.txt` com `Arquivo:`, `Data:` (`19/10/2026 14:30`) e `Duração:` (`hh:mm:ss`), e um parágrafo por linha com `[hh:mm:ss]`, separados por linha em branco; `.md` em LF. `job.json` v1: `version`, `id`, `name`, `media` (`audio`/`video`), `size_bytes`, `duration_ms`, `created` (RFC 3339 com fuso), `backend`, `model`, `timings` e `files`. Nome da pasta limpo até 80 caracteres; nome reservado ganha `_` na frente | Proptest: `.txt` → `parse` volta igual; o nome limpo nunca é inválido |
 
 ## Referências verificadas
 
