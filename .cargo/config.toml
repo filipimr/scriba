@@ -26,3 +26,10 @@ GGML_F16C = "ON"
 # CMAKE_BUILD_TYPE=Release e o /MT do cmake-rs iria só para as flags de Debug.
 CMAKE_POLICY_DEFAULT_CMP0091 = "NEW"
 CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded"
+# whisper.cpp otimizado no release. O cmake-rs tira as flags /O* do cc e, no gerador do
+# Visual Studio, grava as flags em CMAKE_<LANG>_FLAGS_<CMAKE_BUILD_TYPE>, que o whisper-rs-sys
+# fixa em Release no release: sem estas linhas a configuração Release perde o /O2 e o MSVC
+# compila com /Od. No debug o tipo é RelWithDebInfo e o /O2 padrão sobrevive. O build script
+# não rastreia estas variáveis: depois de mudá-las, `cargo clean -p whisper-rs-sys --release`.
+CMAKE_C_FLAGS_RELEASE = "/O2 /Ob2 /DNDEBUG"
+CMAKE_CXX_FLAGS_RELEASE = "/O2 /Ob2 /DNDEBUG"

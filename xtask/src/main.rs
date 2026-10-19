@@ -19,7 +19,8 @@ struct Cli {
 enum Cmd {
     /// Baixa os modelos para models/ e confere o SHA-256.
     Model {
-        /// Baixa só os modelos cujo nome de arquivo contém este texto (ex.: `base`).
+        /// Baixa só os modelos cujo nome de arquivo contém um destes textos, separados por
+        /// vírgula (ex.: `base` ou `base,silero`).
         #[arg(long)]
         only: Option<String>,
     },

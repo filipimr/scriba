@@ -40,7 +40,9 @@ fn silencio_nao_gera_texto_longo() {
 }
 
 /// Large-v3-turbo em CPU e em cada GPU Vulkan, carregado da memória. Imprime os tempos.
-/// Meça em release: o whisper.cpp herda o perfil do Cargo e em debug fica sem otimização.
+/// Meça em release e na tomada. O whisper.cpp sai com /O2 nos dois perfis graças às
+/// `CMAKE_*_FLAGS_RELEASE` do `.cargo/config.toml`; até a Fase 4, o release saía com /Od.
+/// Para comparar modelos, threads e flash attention, use o `tests/bench.rs`.
 #[test]
 #[ignore = "hardware"]
 fn large_cpu_vs_vulkan() {
