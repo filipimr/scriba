@@ -66,14 +66,23 @@ runs:
       with:
         tool: ${{ inputs.tools }}
 
-    # O xtask/src/models.rs guarda o SHA-256 de cada modelo: trocar um invalida a chave.
+    # O xtask/src/models.rs guarda o SHA-256 de cada modelo: trocar um invalida a chave. A
+    # chave não aceita vírgulas.
+    - name: Chave do cache dos modelos
+      if: inputs.models != ''
+      id: model-key
+      shell: pwsh
+      run: |
+        $list = "${{ inputs.models }}" -replace '\s', '' -replace ',', '-'
+        "key=models-$list-${{ hashFiles('xtask/src/models.rs') }}" >> $env:GITHUB_OUTPUT
+
     - name: Cache dos modelos (${{ inputs.models }})
       if: inputs.models != ''
       id: model-cache
       uses: actions/cache@v4
       with:
         path: models/ggml-*.bin
-        key: models-${{ inputs.models }}-${{ hashFiles('xtask/src/models.rs') }}
+        key: ${{ steps.model-key.outputs.key }}
 
     - name: Baixar os modelos
       if: inputs.models != '' && steps.model-cache.outputs.cache-hit != 'true'
