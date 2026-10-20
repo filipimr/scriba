@@ -7,7 +7,7 @@
 
 <h1 align="center">Scriba</h1>
 
-<p align="center">Grava, compacta e transcreve — offline, num único <code>.exe</code> para Windows.</p>
+<p align="center">Grava e transcreve — offline, num único <code>.exe</code> para Windows.</p>
 
 <p align="center">
   <a href="https://github.com/filipimr/scriba/actions/workflows/ci.yml"><img src="https://github.com/filipimr/scriba/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
@@ -21,8 +21,8 @@
 
 - **Transcreve** áudio e vídeo em português do Brasil. O modelo de IA (Whisper large-v3-turbo) vem dentro do executável: você nunca escolhe nem baixa um modelo.
 - **Grava** o microfone e o som do PC em trilhas separadas. A transcrição sai rotulada "Você" / "Outros".
-- **Compacta** vídeos (H.264) e áudios (AAC), mantendo o original quando o ganho é pequeno.
-- **Entrega o texto:** um `transcricao.txt` com marcações de tempo, ao lado do áudio ou vídeo compactado.
+- **Descarta a mídia** depois do texto; se você quiser, guarda o áudio num `.m4a` na pasta que escolher.
+- **Entrega o texto:** um `transcricao.txt` ou um `transcricao.md` com marcações de tempo.
 
 ## Privacidade
 

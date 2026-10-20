@@ -8,6 +8,8 @@ publish = false
 [features]
 # Embute o modelo base e a amostra usados pelo `--self-test` (release do CI).
 embedded-test-model = ["scriba-model/embedded-test-model"]
+# whisper.cpp com backend Vulkan (exige o Vulkan SDK no build): `cargo run --features vulkan`.
+vulkan = ["whisper-rs/vulkan"]
 
 [dependencies]
 scriba-model = { path = "crates/scriba-model" }
@@ -65,9 +67,10 @@ tempfile = "3.27.0"
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "signal", "time", "fs", "io-util", "sync"] }
 tower = { version = "0.5.3", features = ["util"] }
 ureq = "3.4.2"
-whisper-rs = "0.16.0"
+# `raw-api`: o registro de dispositivos do ggml, o VAD carregado da memória e o log.
+whisper-rs = { version = "0.16.0", features = ["raw-api"] }
 # Hora local e fuso (GetLocalTime/GetSystemTime); nos testes, o pico de memória do processo.
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_SystemInformation"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [profile.release]
 lto = "thin"

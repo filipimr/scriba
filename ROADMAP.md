@@ -1,6 +1,6 @@
 # Scriba — Roadmap
 
-App local para Windows, distribuído como um único `.exe`, que **grava** (microfone + som do PC), **compacta** (vídeos e áudios) e **transcreve tudo o que foi falado**, entregando o **texto**. Este documento reúne as decisões de produto e de arquitetura, as fases de desenvolvimento com checklists, a política de testes, os riscos e o registro de decisões.
+App local para Windows, distribuído como um único `.exe`, que **grava** (microfone + som do PC) e **transcreve tudo o que foi falado** em vídeos, áudios e gravações, entregando o **texto**. A mídia é descartada depois, salvo se o usuário pedir para guardar o áudio. Este documento reúne as decisões de produto e de arquitetura, as fases de desenvolvimento com checklists, a política de testes, os riscos e o registro de decisões.
 
 Última atualização: 2026-10-19.
 
@@ -14,7 +14,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | 3 | Fila de jobs e upload | Concluída |
 | 3.5 | Build nativo mais rápido | Concluída |
 | 4 | Transcrição de arquivos (MVP) | Em andamento |
-| 5 | Compactação de vídeo e áudio | Não iniciada |
+| 5 | Guardar áudio | Não iniciada |
 | 6 | Gravação ao vivo | Não iniciada |
 | 7 | Robustez, empacotamento e entrega final | Não iniciada |
 
@@ -37,8 +37,8 @@ Valores possíveis: Não iniciada, Em andamento, Concluída.
 
 Decisões de produto:
 
-- **Objetivo:** gravar, compactar e transcrever. Os três são núcleo.
-- **Fluxo padrão:** receber um arquivo ou gravar → extrair o áudio → transcrever → compactar quando valer a pena. Não há opções para escolher: todo envio e toda gravação passam pelo fluxo inteiro. A compactação vem depois da transcrição, para o texto sair primeiro, e só acontece quando reduz o arquivo de fato.
+- **Objetivo:** gravar e transcrever. A mídia é descartável: depois do texto, gravações e áudios são lixo, a menos que o usuário peça para guardar o áudio.
+- **Fluxo padrão:** receber um arquivo ou gravar → extrair o áudio → transcrever → perguntar "Guardar o áudio?". "Descartar" apaga o temporário na hora; "Guardar áudio" gera um `.m4a` (AAC mono) e abre a janela "Salvar como" do Windows para o usuário escolher a pasta. Sem resposta, o temporário espera até a resposta ou a remoção do job, e é descartado ao fechar o app. O arquivo original enviado nunca é alterado.
 - **Saída:** a transcrição de tudo que foi falado, venha de áudio, de vídeo ou da gravação ao vivo, em `.txt` e `.md`. O vídeo **não** recebe legendas.
 - **Uso não comercial:** o libx264 (GPL) é permitido.
 - **Modelo de IA invisível:** o usuário nunca vê, escolhe nem baixa o modelo. Ele vem embutido no executável e funciona offline.
@@ -87,7 +87,7 @@ O PRD original (codinome "MediaPipe Core") propõe um monólito em Rust: Axum + 
 ### Ordem das fases
 
 - A transcrição vem antes da gravação, porque a gravação depende dela.
-- A compactação vem logo depois da transcrição e antes da gravação: ela é um passo automático do fluxo padrão dos envios, e a gravação reaproveita a compactação do áudio.
+- "Guardar áudio" vem logo depois da transcrição e antes da gravação: é o fim do fluxo dos envios, e a gravação reaproveita a mesma pergunta e o mesmo encoder AAC.
 
 ## Decisões de arquitetura
 
@@ -97,11 +97,11 @@ O PRD original (codinome "MediaPipe Core") propõe um monólito em Rust: Axum + 
 | Transcrição | `whisper-rs` 0.16 com o modelo **large-v3-turbo q5_0 (~0,6 GB) embutido no .exe**, carregado da memória (`WhisperContext::new_from_buffer_with_params`) | Invisível e offline. O .exe fica com ~0,65 GB |
 | Aceleração | Backend **Vulkan** (o `vulkan-1.dll` vem com o driver da GPU), com fallback para CPU | CUDA descartado: exigiria DLLs de centenas de MB ao lado do exe |
 | Mídia | `ffmpeg-next` 9 + FFmpeg 9 **estático** via vcpkg com baseline fixado no repo: `ffmpeg[core,avcodec,avformat,swresample,swscale,x264,gpl,nvcodec]` | Sem DLLs do FFmpeg. O binário distribuído é GPL (veja a Fase 1) |
-| Captura | `cpal` (WASAPI): mic e loopback em trilhas separadas, WAV mono 16-bit gravado no disco | À prova de crash. Ocupa ~345 MB/h por trilha até a compactação |
+| Captura | `cpal` (WASAPI): mic e loopback em trilhas separadas, WAV mono 16-bit gravado no disco | À prova de crash. Ocupa ~345 MB/h por trilha; apagadas depois da transcrição |
 | Web | `axum` 0.8 + `askama` + htmx 2 + Tailwind v4 compilado + fonte Inter (substituta do SF Pro indicada pelo design doc), tudo embutido | Nenhum arquivo solto. Funciona offline |
 | Estado | Fila em memória (`Arc<RwLock<HashMap>>` + `mpsc`), mais um manifesto `job.json` por saída | O histórico sobrevive a reinícios sem precisar de banco |
 | Saídas | `Documentos\Scriba\AAAA-MM-DD HHmm - nome\` (`transcricao.txt`, `transcricao.md`, `audio.m4a`/`video.mp4`). Temporários em `%LOCALAPPDATA%\Scriba` | Todos os caminhos são configuráveis, o que deixa os testes isolados |
-| Compressão | Passo automático do fluxo, depois da transcrição. Vídeo: x264 CRF ~26 (padrão) ou NVENC ("rápido"), até 1080p, áudio AAC. Áudio e gravações: AAC `.m4a` 96 kbps mono | Só compacta quando vale a pena (pela taxa de bits e pela resolução do original) e mantém o original se o ganho for menor que 5% |
+| Guardar áudio | No fim de cada transcrição, "Guardar o áudio?": AAC `.m4a` mono, gravado onde o usuário escolher no "Salvar como" do Windows; senão o temporário é apagado | Mídia descartável; sem compactação de vídeo. O x264 continua no FFmpeg só pelo `--self-test` (avaliar tirar) |
 | Testabilidade | Traits `Pipeline` (Fase 3), `Transcriber`, `MediaEngine`, `AudioSource` e `Clock`. Feature `test-support` com fakes e as flags `--fake-pipeline` e `--fake-audio`, fora do release | Toda a lógica roda no CI, sem placa de som nem GPU |
 
 ## Arquitetura
@@ -114,7 +114,7 @@ Navegador (HTMX)  ⇄  Axum @127.0.0.1 [token + Host/Origin]
                         ▲                                   ├─ media::extract_audio  (FFmpeg → 16 kHz mono f32)
                         │                                   ├─ asr::transcribe       (whisper + VAD, progresso/cancelar)
                         │                                   ├─ transcript::write     (.txt e .md com [hh:mm:ss] e Você/Outros)
-                        │                                   └─ media::compress       (H.264/AAC, quando vale a pena)
+                        │                                   └─ media::encode_audio   (.m4a, só se o usuário pedir)
                  Recorder (AudioSource: cpal mic + loopback + silêncio na saída | fake nos testes)
                    └─ ring buffers → thread de escrita → mic.wav / sistema.wav ──(Parar)──▶ novo job
 ```
@@ -311,18 +311,18 @@ O plano da fase a divide em seis etapas, cada uma com o próprio PR: 4.1 whisper
 **Entregas:**
 
 - [x] `media::probe` e `media::extract_audio`: duração, taxa de bits e resolução do original; melhor faixa de áudio → 16 kHz mono f32, sem decodificar o vídeo, com progresso por pts e erros amigáveis (ex.: "arquivo sem áudio").
-- [ ] `asr`:
+- [x] `asr` (etapa 4.3; entra no app na 4.4):
   - Contexto carregado sob demanda e liberado após 10 min ocioso.
   - Idioma `pt`, VAD Silero e `no_context`.
   - Threads = núcleos − 2, salvo se a investigação da CPU mostrar uma regra melhor.
   - Progresso, cancelamento e filtro de frases-fantasma.
-- [ ] Escolha do backend (achado do spike A: só CPU com o modelo grande leva ~8 h para 1 h de áudio):
-  - Usar a GPU **dedicada** quando houver, e não o dispositivo Vulkan 0, que costuma ser a integrada. Se não houver dedicada, usar a integrada.
-  - Sem GPU Vulkan, transcrever na CPU com um **modelo menor embutido**. A escolha entre `small` e `base` sai de um benchmark de precisão × tempo nas fixtures. O custo é o exe crescer ~60–190 MB.
+- [ ] Escolha do backend (4.3: escolha e benchmark prontos; falta a UI, na 4.4/4.5) (achado do spike A: só CPU com o modelo grande leva ~8 h para 1 h de áudio):
+  - Usar a GPU **dedicada** quando houver, e não o dispositivo Vulkan 0, que costuma ser a integrada. Sem dedicada, a CPU: a integrada ficou de fora porque, no benchmark da 4.3, foi mais lenta que a CPU com todos os modelos.
+  - Sem GPU dedicada, transcrever na CPU com um **modelo menor embutido**: o `small` (benchmark da 4.3: 8,7% de WER contra 15,9% do `base`, RTF 0,105). O custo é o exe crescer ~190 MB.
   - Antes de fechar o fallback, investigar a lentidão da CPU (~87 s para 10,9 s), comparando com o whisper.cpp oficial e testando threads e OpenMP. No planejamento, a leitura do `CMakeCache.txt` mostrou que o whisper.cpp do release compila sem `/O2` (veja o Registro de decisões).
   - Mostrar na UI qual backend está em uso e uma estimativa de tempo antes de começar.
 - [x] `transcript`: parágrafos (pausa > 1,5 s quebra), `[hh:mm:ss]` em cada parágrafo e cabeçalho (origem, data, duração). Gera `transcricao.txt`, `transcricao.md` e `job.json`.
-- [ ] Fluxo automático: o envio deixa de ter as opções "Transcrever" e "Compactar". Todo job extrai o áudio e transcreve; a compactação entra na Fase 5, depois da transcrição.
+- [ ] Fluxo automático: o envio deixa de ter as opções "Transcrever" e "Compactar". Todo job extrai o áudio e transcreve; a pergunta "Guardar o áudio?" entra na Fase 5.
 - [ ] UI: leitor da transcrição, Copiar texto, Baixar .txt, Baixar .md e Abrir pasta.
 - [ ] Herdado da Fase 3:
   - O pipeline real substitui o falso no app; o falso vai para a feature `test-support`, com a flag `--fake-pipeline` para o E2E.
@@ -332,16 +332,16 @@ O plano da fase a divide em seis etapas, cada uma com o próprio PR: 4.1 whisper
 
 **Testes:**
 
-- [ ] Unitários: parágrafos, formato de tempo, filtro de frases-fantasma, cabeçalho e o `.md` (snapshots).
-- [ ] Integração com o modelo pequeno:
+- [x] Unitários: parágrafos, formato de tempo, filtro de frases-fantasma, cabeçalho e o `.md` (snapshots).
+- [x] Integração com o modelo pequeno:
   - Fixtures MP4, MP3, M4A, OGG e WAV → palavras-chave.
   - Silêncio puro → texto vazio, sem frases-fantasma.
   - Cancelar no meio interrompe a transcrição.
   - Arquivo sem áudio → erro amigável.
 - [ ] E2E: upload → texto visível → copiar → .txt e .md baixados com o conteúdo certo.
-- [ ] Unitário: a escolha do backend prefere GPU dedicada, depois integrada, depois CPU com o modelo menor (com uma lista de dispositivos falsa).
-- [ ] Local: benchmark com 1 h de áudio real em cada backend (RTX, Intel integrada e só CPU).
-- [ ] Local: "compactar antes acelera?": extrair o áudio direto de 1 h de vídeo real, contra recodificar o mesmo vídeo com x264 e com NVENC (pelo `ffmpeg` CLI). O resultado alimenta a regra de "vale a pena" da Fase 5.
+- [x] Unitário: a escolha do backend prefere GPU dedicada (a de mais memória), depois CPU com o modelo menor; a integrada fica de fora (com uma lista de dispositivos falsa).
+- [x] Local: benchmark em cada backend (RTX, Intel integrada e só CPU), com 45,5 min de fala real do FLEURS pt_br no lugar de 1 h (etapa 4.3).
+- [ ] Local: pico de RAM e tempo com 1 h e 3 h de áudio, com a transcrição em blocos de ~30 min (meta: ≤ ~1,5 GB em qualquer duração). (O item "compactar antes acelera?" saiu com a compactação.)
 
 **Pronto quando:**
 
@@ -349,35 +349,30 @@ O plano da fase a divide em seis etapas, cada uma com o próprio PR: 4.1 whisper
 - [ ] O tempo para transcrever 1 h de áudio na RTX 3050 está registrado.
 - [ ] Metas para 1 h de áudio: ≤ 10 min na RTX 3050 e ≤ 1 h só na CPU (com o modelo menor). Os tempos medidos nos três backends ficam no registro de decisões.
 
-### Fase 5 — Compactação de vídeo e áudio
+### Fase 5 — Guardar áudio
 
-Base no PRD: Sprint 3.2 e Sprint 4.2. Objetivo: vídeos e áudios enviados ficam menores, num passo automático do fluxo padrão, depois da transcrição.
+Objetivo: no fim de cada transcrição, o usuário decide se o áudio vira lixo ou se é guardado num `.m4a`, na pasta que ele escolher. A compactação de vídeo saiu do produto (decisão de 2026-10-19).
 
 **Entregas:**
 
-- [ ] `media::compress_video`:
-  - Escala até 1080p, mantendo a proporção, com dimensões pares.
-  - Codifica com x264 CRF 26 (padrão) ou NVENC p5 CQ 28.
-  - Áudio AAC, MP4 `faststart`, progresso e cancelamento.
-- [ ] `media::compress_audio` para áudios enviados (reaproveitado pela gravação, na Fase 6).
-- [ ] Passo automático, sem opção na tela: roda depois da transcrição e só quando vale a pena, pela taxa de bits e pela resolução do original. A regra parte das medições da Fase 4.
-- [ ] O original é mantido quando o ganho for menor que 5%.
-- [ ] UI: tamanho antes → depois (−xx%).
+- [ ] `media::encode_audio`: o áudio do original (ou o mix da gravação) → `.m4a` AAC mono, com progresso e cancelamento. Um vídeo vira só o som.
+- [ ] Card concluído com "Guardar o áudio?": "Descartar" (apaga o temporário) e "Guardar áudio".
+- [ ] "Guardar áudio" abre a janela "Salvar como" nativa do Windows pelo exe (lembra a última pasta) e grava o `.m4a` lá; cancelar a janela mantém a pergunta.
+- [ ] O temporário fica até a resposta ou a remoção do job e é apagado ao fechar o app e ao iniciar (sobras).
 
 **Testes:**
 
-- [ ] Unitários: regra de quando vale a pena, regra dos 5%, cálculo de dimensões e preset → parâmetros.
-- [ ] Integração: vídeo sai H.264 com as dimensões e a duração esperadas (±0,1 s) e menor que o original; áudio sai AAC; cancelar no meio interrompe.
-- [ ] E2E: upload → tamanho antes/depois na tela.
-- [ ] Local: NVENC.
+- [ ] Integração: os formatos das fixtures saem AAC mono com a duração do original (±0,1 s); cancelar interrompe.
+- [ ] Rotas: descartar apaga o temporário; guardar com um diálogo falso grava no caminho escolhido; diálogo cancelado não apaga nada.
+- [ ] E2E: transcrição → "Descartar" e "Guardar áudio" (diálogo falso com `--fake-pipeline`).
 
 **Pronto quando:**
 
-- [ ] Uma gravação de 1 h do Teams fica menor e abre no Media Player e no VLC.
+- [ ] Uma gravação de 1 h do Teams vira texto e, se pedido, um `.m4a` na pasta escolhida que abre no Media Player e no celular.
 
 ### Fase 6 — Gravação ao vivo
 
-Base no PRD: Sprint 5. Objetivo: um clique grava o microfone e o som do PC; ao parar, saem a transcrição rotulada "Você" / "Outros" e o áudio compactado.
+Base no PRD: Sprint 5. Objetivo: um clique grava o microfone e o som do PC; ao parar, sai a transcrição rotulada "Você" / "Outros", e as trilhas são descartadas, salvo se o usuário guardar o áudio.
 
 **Entregas:**
 
@@ -392,7 +387,7 @@ Base no PRD: Sprint 5. Objetivo: um clique grava o microfone e o som do PC; ao p
 - [ ] Rotas `POST /api/record/start`, `POST /api/record/stop` e `GET /api/record/status`.
 - [ ] UI: tile escuro com botão grande e barra fixa "● Gravando 00:12:34 · Parar".
 - [ ] Job de gravação:
-  - Mixdown para `audio.m4a`, com o `media::compress_audio` da Fase 5.
+  - Mixdown só se o usuário escolher "Guardar áudio", com o `media::encode_audio` da Fase 5.
   - Transcrição de cada trilha, mesclada por tempo com os rótulos Você/Outros.
   - Remoção do eco e geração do `transcricao.txt` e do `transcricao.md`.
   - WAVs apagados após o sucesso.
@@ -437,7 +432,7 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 
 **Pronto quando:**
 
-- [ ] A tag gera uma release que passa no smoke test do CI e no Sandbox, com o fluxo completo de gravar, compactar e transcrever.
+- [ ] A tag gera uma release que passa no smoke test do CI e no Sandbox, com o fluxo completo de enviar ou gravar e transcrever.
 
 ## Backlog (fora da v1)
 
@@ -547,7 +542,17 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-19 | Fase 4 | RTF em 65 s de áudio: CPU base 0,041, small 0,118, large 0,435; Intel large 0,53, small 0,17; RTX large 0,020 com flash | Entrada do benchmark small × base (4.3) e do ponto de controle: o large na CPU já fica abaixo de RTF 0,5 |
 | 2026-10-19 | Fase 4 | Etapa 4.2: `media` e `transcript` prontos, ainda fora do app. Os oito formatos das fixtures (MP4, MP3, M4A, OGG, MKV, MOV, M4A 48 kHz estéreo e WAV) dão 10,931 s extraídos, igual ao WAV. O resampler é esvaziado no fim (`flush` com o frame de saída já alocado; vazio, o swr recusa com "Output changed") e recriado se o formato muda no meio. Um pacote ruim é pulado; erro de leitura ou nenhuma amostra viram "Não consegui ler o áudio…". MP4 truncado sem o `moov` não abre e dá "Não reconheci…" | `tests/media.rs` |
 | 2026-10-19 | Fase 4 | O `probe` dá a duração do arquivo inteiro (contêiner), não só do áudio. O `fala.mp4` atual tem 13,7 s de vídeo para 10,9 s de áudio: o `-shortest` do xtask passava do áudio. As fixtures novas (`fala.mkv`, `fala.mov`) já nascem com o vídeo do tamanho do WAV; o `fala.mp4` não foi regerado | `ffprobe` das fixtures |
+| 2026-10-19 | Planejamento | A mídia é descartável: sai a compactação de vídeo (x264/NVENC, regra de "vale a pena"). No fim de cada transcrição, "Guardar o áudio?": "Descartar" apaga o temporário; "Guardar áudio" gera um `.m4a` AAC mono e abre o "Salvar como" do Windows. A Fase 5 vira "Guardar áudio"; a gravação (Fase 6) usa a mesma pergunta e apaga as trilhas | Pedido do usuário: depois do texto, a gravação é lixo; compactar o vídeo não reduz a memória da transcrição, que só usa o áudio |
+| 2026-10-19 | Planejamento | Reuniões de 2–3 h: a transcrição em blocos de ~30 min, cortados nos silêncios do VAD, passa a ser obrigatória na 4.6 (meta: pico de RAM ≤ ~1,5 GB em qualquer duração, medido com 1 h e 3 h) | Hoje o áudio inteiro, a cópia do VAD e o mel ficam na RAM: ~2,5–3 GB estimados para 3 h, pesado num PC de 8 GB |
 | 2026-10-19 | Fase 4 | Formato da saída: `.txt` com `Arquivo:`, `Data:` (`19/10/2026 14:30`) e `Duração:` (`hh:mm:ss`), e um parágrafo por linha com `[hh:mm:ss]`, separados por linha em branco; `.md` em LF. `job.json` v1: `version`, `id`, `name`, `media` (`audio`/`video`), `size_bytes`, `duration_ms`, `created` (RFC 3339 com fuso), `backend`, `model`, `timings` e `files`. Nome da pasta limpo até 80 caracteres; nome reservado ganha `_` na frente | Proptest: `.txt` → `parse` volta igual; o nome limpo nunca é inválido |
+| 2026-10-19 | Fase 4 | Etapa 4.3: `asr` pronto, ainda fora do app. O `state.full` do whisper-rs (`whisper_full_with_state`) ignora `params.vad`: o VAD Silero roda no nosso código (`vad.rs`), carregado da memória por loader próprio, sem gravar o modelo em `<data-dir>/models/` como o plano previa. A fala é juntada e os tempos voltam ao áudio original pelo `TimeMap` | Sem isso, o silêncio virava frase-fantasma e o tempo de transcrição incluía as pausas |
+| 2026-10-19 | Fase 4 | O `set_abort_callback_safe` do whisper-rs 0.16 tem confusão de tipos (UB), e os callbacks "safe" vazam a closure: progresso e cancelamento usam trampolins C próprios sobre dados na pilha da chamada. Isso dispensa os handles `'static` no `Ctx` previstos para a 4.4 | Revisão do código do whisper-rs 0.16 |
+| 2026-10-19 | Fase 4 | No áudio juntado pelo VAD, uma pausa longa vira ~0,2 s e o whisper encosta o início de um segmento no fim do anterior; o `TimeMap::segment_ms` usa a regra da "ponta" de 0,25 s para devolver o início ao trecho de fala certo | Teste do `pausas.wav`: 2 parágrafos |
+| 2026-10-19 | Fase 4 | O 1º uso do Vulkan em cada processo compila os shaders (~9 s na RTX); vale para a estimativa de tempo da 4.4. A memória da GPU volta depois do ocioso (5224 → 4416 → 5224 MB livres na RTX) | Suíte de hardware de `tests/asr.rs` |
+| 2026-10-19 | Fase 4 | Benchmark com as configurações do app (`tests/bench_asr.rs`), FLEURS pt_br (CC BY 4.0): 3 áudios de ~15 min (45,5 min) montados de 202 falas, com o texto oficial como referência, na tomada e em "Melhor desempenho". Transcrição / RTF / WER / RAM: base CPU 126 s / 0,046 / 15,9% / 498 MB; base Intel 222 s / 0,081 / 18,4% / 550 MB; base RTX 44 s / 0,016 / 15,8% / 93 MB; small CPU 286 s / 0,105 / 8,7% / 699 MB; small Intel 401 s / 0,147 / 8,7% / 756 MB; small RTX 56 s / 0,020 / 8,7% / 76 MB; large CPU 958 s / 0,350 / 6,6% / 1200 MB; large Intel 1107 s / 0,405 / 9,0% / 1248 MB; large RTX 72 s / 0,026 / 7,2% / 548 MB. Carga ≤ 1,2 s em todos. Nas fixtures (`fala.wav` + `pausas.wav`): large 2,9% de WER, base e small 8,6% | Entrada das decisões do modelo da CPU e da GPU integrada |
+| 2026-10-19 | Fase 4 | Modelo da CPU: `small` (`CPU_MODEL`). Metade do erro do `base` por ~2,3× o tempo, e 1 h de áudio em ~6,3 min, bem dentro da meta de ≤ 1 h. O large na CPU (6,6%) custaria 3,3× o tempo e 1,2 GB de RAM | Benchmark acima; mantém a política da Fase 0 (modelo menor embutido) |
+| 2026-10-19 | Fase 4 | Revê a política de backend da Fase 0: a GPU integrada sai da lista, que fica "GPU dedicada (mais memória primeiro) → CPU com o `small`". A Intel foi mais lenta que a CPU com todos os modelos e, com o large, teve WER pior (9,0% contra 6,6%) | Benchmark acima |
+| 2026-10-19 | Fase 4 | Versões: `whisper-rs` com a feature `raw-api` (registro de dispositivos do ggml, VAD da memória e log); feature `vulkan` no `scriba` (`whisper-rs/vulkan`); `windows-sys` com `Win32_System_Threading`. O cache de modelos do CI passa a ter o base q5_1 e o Silero v6.2.0 | Reprodutibilidade |
 
 ## Referências verificadas
 
