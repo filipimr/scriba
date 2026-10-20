@@ -1,9 +1,10 @@
-//! `scriba --self-test`: prova, no exe de release, que o modelo carrega da memória,
-//! que o whisper transcreve pt-BR em CPU e que o FFmpeg estático codifica H.264.
+//! `scriba --self-test`: prova, no exe de release, que o modelo e o VAD carregam da memória,
+//! que o pipeline do app (`media` + `asr`) transcreve pt-BR em CPU e que o FFmpeg estático
+//! codifica H.264.
 
 use std::fmt;
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail, ensure};
@@ -11,7 +12,9 @@ use ffmpeg::format::Pixel;
 use ffmpeg::util::frame;
 use ffmpeg::{Dictionary, Rational, codec, encoder};
 use ffmpeg_next as ffmpeg;
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+use crate::asr::{self, Asr, Model, Models, Plan, Source};
+use crate::media;
 
 /// Palavras ditas na amostra `tests/fixtures/fala.wav`.
 const KEYWORDS: &[&str] = &[
@@ -49,18 +52,30 @@ impl fmt::Display for Report {
     }
 }
 
-/// Usa o modelo e a amostra embutidos; sem a feature `embedded-test-model`, lê de
+/// Usa o modelo, o VAD e a amostra embutidos; sem a feature `embedded-test-model`, lê de
 /// `models/` e `tests/fixtures/` do repositório. Falha se a transcrição passar do limite
 /// de [`MAX_SECS_VAR`], quando definido.
 pub fn run_default() -> anyhow::Result<Report> {
-    let report = match (scriba_model::TEST_WHISPER, scriba_model::TEST_SAMPLE) {
-        (Some(model), Some(sample)) => run(model, sample)?,
+    let report = match (
+        scriba_model::TEST_WHISPER,
+        scriba_model::VAD,
+        scriba_model::TEST_SAMPLE,
+    ) {
+        (Some(model), Some(vad), Some(sample)) => {
+            run(Source::Embedded(model), Source::Embedded(vad), sample)?
+        }
         _ => {
             let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-            let model = std::fs::read(root.join("models/ggml-base-q5_1.bin"))
-                .context("modelo não embutido: rode `cargo xtask model --only base`")?;
+            let file = |name: &str| {
+                let path = root.join("models").join(name);
+                ensure!(
+                    path.is_file(),
+                    "{name} não embutido: rode `cargo xtask model --only base,silero`"
+                );
+                Ok(Source::File(path))
+            };
             let sample = std::fs::read(root.join("tests/fixtures/fala.wav"))?;
-            run(&model, &sample)?
+            run(file(asr::BASE_FILE)?, file(asr::VAD_FILE)?, &sample)?
         }
     };
     check_limit(
@@ -86,10 +101,33 @@ fn check_limit(transcribe: Duration, max_secs: Option<&str>) -> anyhow::Result<(
     Ok(())
 }
 
-pub fn run(model: &[u8], wav: &[u8]) -> anyhow::Result<Report> {
+/// Transcreve `sample` (qualquer formato que o FFmpeg leia) com o modelo base na CPU e
+/// codifica um clipe x264.
+pub fn run(model: Source, vad: Source, sample: &[u8]) -> anyhow::Result<Report> {
+    let input = temp_path("scriba-self-test.wav");
+    std::fs::write(&input, sample)?;
+    let never = AtomicBool::new(false);
+    let audio = media::extract_audio(&input, |_| {}, &never);
+    let _ = std::fs::remove_file(&input);
+    let audio = audio?;
+
+    let models = Models {
+        large: None,
+        cpu: Some(Model {
+            name: "base",
+            source: model,
+        }),
+        vad: Some(vad),
+    };
     let t0 = Instant::now();
-    let text = transcribe_cpu(model, &read_wav_f32(wav)?)?;
+    let transcription = Asr::new(vec![Plan::cpu()], models).transcribe(&audio, |_| {}, &never)?;
     let transcribe = t0.elapsed();
+    let text = transcription
+        .segments
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
     let hits = keyword_hits(&text);
     if hits < MIN_HITS {
         bail!("só {hits} de {MIN_HITS} palavras-chave na transcrição: {text:?}");
@@ -112,43 +150,16 @@ pub fn run(model: &[u8], wav: &[u8]) -> anyhow::Result<Report> {
     })
 }
 
-/// Lê um WAV 16 kHz mono 16-bit como f32 em [-1, 1].
-fn read_wav_f32(wav: &[u8]) -> anyhow::Result<Vec<f32>> {
-    let mut r = hound::WavReader::new(Cursor::new(wav))?;
-    let spec = r.spec();
-    ensure!(
-        spec.channels == 1 && spec.sample_rate == 16_000 && spec.bits_per_sample == 16,
-        "amostra precisa ser WAV 16 kHz mono 16-bit: {spec:?}"
-    );
-    Ok(r.samples::<i16>()
-        .map(|s| s.map(|v| f32::from(v) / 32768.0))
-        .collect::<Result<_, _>>()?)
-}
-
-fn transcribe_cpu(model: &[u8], audio: &[f32]) -> anyhow::Result<String> {
-    let mut cp = WhisperContextParameters::default();
-    cp.use_gpu(false);
-    let ctx = WhisperContext::new_from_buffer_with_params(model, cp)?;
-    let mut state = ctx.create_state()?;
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    params.set_language(Some("pt"));
-    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
-    params.set_n_threads(cores.saturating_sub(2).max(1) as i32);
-    params.set_no_context(true);
-    params.set_print_progress(false);
-    params.set_print_realtime(false);
-    params.set_print_timestamps(false);
-    state.full(params, audio)?;
-    Ok(state.as_iter().map(|seg| seg.to_string()).collect())
-}
-
 fn keyword_hits(text: &str) -> usize {
     let t = text.to_lowercase();
     KEYWORDS.iter().filter(|k| t.contains(*k)).count()
 }
 
+/// Único por chamada: dois self-tests no mesmo processo (os testes) não dividem o arquivo.
 fn temp_path(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("{}-{name}", std::process::id()))
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("{}-{n}-{name}", std::process::id()))
 }
 
 /// Codifica 1 s de vídeo cinza 320x240 a 10 fps com libx264 em MP4 e devolve a duração lida.
@@ -219,19 +230,15 @@ mod tests {
     }
 
     #[test]
-    fn recusa_wav_fora_do_formato() {
-        let mut buf = Cursor::new(Vec::new());
-        let spec = hound::WavSpec {
-            channels: 2,
-            sample_rate: 44_100,
-            bits_per_sample: 16,
-            sample_format: hound::SampleFormat::Int,
+    fn amostra_que_nao_e_audio_falha() {
+        let Err(err) = run(
+            Source::Embedded(b""),
+            Source::Embedded(b""),
+            b"isto nao e audio",
+        ) else {
+            panic!("bytes que não são áudio passaram");
         };
-        hound::WavWriter::new(&mut buf, spec)
-            .unwrap()
-            .finalize()
-            .unwrap();
-        assert!(read_wav_f32(buf.get_ref()).is_err());
+        assert!(err.to_string().contains("Não reconheci"), "{err}");
     }
 
     #[test]

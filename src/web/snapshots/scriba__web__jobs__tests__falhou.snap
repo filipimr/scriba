@@ -26,7 +26,7 @@ expression: html
       <h3 class="job-card-name" title="Reunião &#60;equipe&#62;.mp4">Reunião &#60;equipe&#62;.mp4</h3>
       <span class="status-badge status-badge-error">Falhou</span>
     </div>
-    <p class="job-card-meta">312 MB</p>
+    <p class="job-card-meta">47 min · 312 MB · <span class="job-card-date">20/10/2026 14:30</span></p>
     <p class="alert-inline"><!-- @license lucide-static v1.59.0 - ISC -->
 <svg
   aria-hidden="true"
@@ -45,9 +45,12 @@ expression: html
   <line x1="12" x2="12" y1="8" y2="12" />
   <line x1="12" x2="12.01" y1="16" y2="16" />
 </svg><span>Não foi possível processar este arquivo.</span></p>
+    <div class="job-card-actions">
+      <button class="btn btn-secondary" type="button"
+        hx-post="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/retry" hx-target="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" hx-swap="outerHTML" hx-sync="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0:replace">Tentar de novo</button>
+    </div>
   </div>
-  <button id="acao-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" class="btn-icon" type="button" aria-label="Remover Reunião &#60;equipe&#62;.mp4" title="Remover"
-    hx-delete="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0" hx-target="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" hx-swap="outerHTML" hx-sync="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0:replace"><!-- @license lucide-static v1.59.0 - ISC -->
+  <button id="acao-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" class="btn-icon" type="button" aria-label="Remover Reunião &#60;equipe&#62;.mp4" title="Remover" hx-delete="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0" hx-target="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" hx-swap="outerHTML" hx-sync="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0:replace"><!-- @license lucide-static v1.59.0 - ISC -->
 <svg
   aria-hidden="true"
   class="lucide lucide-trash-2"

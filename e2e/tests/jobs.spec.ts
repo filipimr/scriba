@@ -1,8 +1,12 @@
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../fixtures";
 
-// O app usa o pipeline falso nesta fase (~2 s por etapa). Pelo nome do arquivo:
-// "lento" fica 10× mais devagar e "falha" falha na metade da primeira etapa.
+// O exe roda o pipeline falso (~2 s por etapa; duração de 2 min e "Cerca de 4 min no
+// processador" no probe). Pelo nome do arquivo: "lento" fica 10× mais devagar, "falha"
+// falha na metade da primeira etapa, "falha-uma-vez" só na primeira tentativa e
+// "sem-audio" é recusado no envio.
 
 /** Arquivo de 2 KB: o conteúdo não importa para o pipeline falso. */
 const file = (name: string) => ({ name, mimeType: "application/octet-stream", buffer: Buffer.alloc(2048, 7) });
@@ -92,27 +96,78 @@ test("formato não suportado é recusado sem criar job", async ({ page, scriba }
   await expect(page.locator("article.job-card")).toHaveCount(0);
 });
 
-test("sem nenhuma opção marcada o envio é recusado", async ({ page, scriba }) => {
+test("arquivo sem áudio é recusado sem criar job", async ({ page, scriba }) => {
   await page.goto(scriba.url);
-  await page.getByText("Transcrever", { exact: true }).click();
-  await expect(page.getByRole("checkbox", { name: "Transcrever" })).not.toBeChecked();
-  await page.locator("#arquivo").setInputFiles(file("reuniao.mp4"));
-  await expect(page.getByRole("alert")).toHaveText("Escolha Transcrever, Compactar ou os dois.");
+  await page.locator("#arquivo").setInputFiles(file("tela-sem-audio.mp4"));
+  await expect(page.getByRole("alert")).toHaveText("Este arquivo não tem áudio. Escolha um vídeo com som.");
   await expect(page.locator("article.job-card")).toHaveCount(0);
 });
 
-test("remover um job concluído volta ao estado vazio", async ({ page, scriba }) => {
+test("o card mostra duração, tamanho, data e, na fila, a estimativa", async ({ page, scriba }) => {
+  await page.goto(scriba.url);
+  await upload(page, "lento.mkv");
+  await upload(page, "depois.mp3");
+  const queued = card(page, "depois.mp3");
+  await expect(queued.getByText("Na fila")).toBeVisible();
+  await expect(queued.getByText(/^2 min · 2 KB · \d{2}\/\d{2}\/\d{4} \d{2}:\d{2}$/)).toBeVisible();
+  await expect(queued.getByText("Cerca de 4 min no processador")).toBeVisible();
+  // Rodando, a estimativa sai e a etapa entra.
+  await expect(card(page, "lento.mkv").getByText("Cerca de")).toHaveCount(0);
+});
+
+test("tentar de novo um job que falhou", async ({ page, scriba }) => {
+  await page.goto(scriba.url);
+  await upload(page, "falha-uma-vez.wav");
+  const job = card(page, "falha-uma-vez.wav");
+  await expect(job.getByText("Falhou")).toBeVisible({ timeout: 10_000 });
+
+  await job.getByRole("button", { name: "Tentar de novo" }).click();
+  await expect(job.getByText(/^(Extraindo áudio|Transcrevendo)… \d+%$/)).toBeVisible();
+  await expect(job.getByText("Concluído")).toBeVisible({ timeout: 15_000 });
+  await expect(job.getByRole("button", { name: "Tentar de novo" })).toHaveCount(0);
+  await expect(page.locator("#avisos")).toHaveText("falha-uma-vez.wav: concluído.");
+});
+
+test("remover um job concluído pede confirmação e manda a pasta para a Lixeira", async ({ page, scriba }) => {
   await page.goto(scriba.url);
   await upload(page, "curto.mp3");
   const job = card(page, "curto.mp3");
   await expect(job.getByText("Concluído")).toBeVisible({ timeout: 15_000 });
+  const folders = readdirSync(scriba.outputDir);
+  expect(folders).toEqual([expect.stringMatching(/^\d{4}-\d{2}-\d{2} \d{4} - curto$/)]);
 
-  await job.getByRole("button", { name: "Remover curto.mp3" }).click();
+  const remove = job.getByRole("button", { name: "Remover curto.mp3" });
+  const dialog = page.getByRole("dialog", { name: "Excluir a transcrição?" });
+  await remove.click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText(`A pasta “${folders[0]}” vai para a Lixeira.`);
+  await expect(dialog.getByRole("button", { name: "Cancelar" })).toBeFocused();
+  // Esc cancela: nada muda e o foco volta ao Remover.
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(remove).toBeFocused();
+  await expect(job).toBeVisible();
+  expect(existsSync(join(scriba.outputDir, folders[0]))).toBe(true);
+
+  await remove.click();
+  await dialog.getByRole("button", { name: "Excluir" }).click();
   await expect(page.locator("article.job-card")).toHaveCount(0);
   await expect(page.getByText("Nada por aqui ainda")).toBeVisible();
+  expect(readdirSync(scriba.outputDir)).toEqual([]);
 
   await page.reload();
   await expect(page.locator("article.job-card")).toHaveCount(0);
+});
+
+test("remover um job cancelado não pede confirmação", async ({ page, scriba }) => {
+  await page.goto(scriba.url);
+  await upload(page, "lento.mkv");
+  const job = card(page, "lento.mkv");
+  await job.getByRole("button", { name: "Cancelar lento.mkv" }).click();
+  await expect(job.getByText("Cancelado")).toBeVisible({ timeout: 10_000 });
+  await job.getByRole("button", { name: "Remover lento.mkv" }).click();
+  await expect(page.locator("article.job-card")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
 for (const scheme of ["light", "dark"] as const) {
@@ -130,6 +185,9 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(card(page, "lento.mkv").getByText("Cancelado")).toBeVisible({ timeout: 10_000 });
 
     await page.evaluate(() => document.fonts.ready);
-    await expect(page.locator(".recentes")).toHaveScreenshot(`recentes-${scheme}.png`);
+    // A data do envio muda a cada execução.
+    await expect(page.locator(".recentes")).toHaveScreenshot(`recentes-${scheme}.png`, {
+      mask: [page.locator(".job-card-date")],
+    });
   });
 }

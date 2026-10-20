@@ -12,6 +12,26 @@ document.body.addEventListener("scriba-theme", (e) => {
 window.addEventListener("dragover", (e) => e.preventDefault());
 window.addEventListener("drop", (e) => e.preventDefault());
 
+// Remover um job concluído (hx-confirm) pede confirmação no <dialog> do design, não no
+// window.confirm. O showModal prende o foco, o Esc cancela e o foco volta ao botão.
+const dialog = document.getElementById("confirmar");
+if (dialog) {
+  document.body.addEventListener("htmx:confirm", (e) => {
+    if (!e.detail.question) return;
+    e.preventDefault();
+    dialog.querySelector("#confirmar-texto").textContent = e.detail.question;
+    dialog.returnValue = "";
+    dialog.addEventListener(
+      "close",
+      () => {
+        if (dialog.returnValue === "excluir") e.detail.issueRequest(true);
+      },
+      { once: true },
+    );
+    dialog.showModal();
+  });
+}
+
 // Envio de arquivos: soltar na dropzone ou escolher no botão. O htmx faz o POST multipart; aqui
 // só validamos antes de enviar (formatos do `accept`, mensagens vindas do servidor) e
 // mostramos o progresso do upload.
@@ -35,10 +55,6 @@ if (form) {
     if (!supported) {
       input.value = "";
       return showError(form.dataset.erroFormato);
-    }
-    if (!form.querySelector("fieldset input:checked")) {
-      input.value = "";
-      return showError(form.dataset.erroOpcoes);
     }
     if (files !== input.files) input.files = files;
     errorBox.replaceChildren();

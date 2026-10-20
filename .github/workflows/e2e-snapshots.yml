@@ -18,7 +18,7 @@ jobs:
       - uses: ./.github/actions/setup-native
 
       - name: Build do app
-        run: cargo build
+        run: cargo build --features test-support
 
       - uses: actions/setup-node@v4
         with:

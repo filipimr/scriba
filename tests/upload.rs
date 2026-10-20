@@ -2,17 +2,21 @@
 //! memória, um envio recusado ainda recebe a resposta e um cliente que cai no meio não
 //! deixa sobras; em processo, o encerramento não espera um envio parado.
 //!
+//! O exe sobe com `--fake-pipeline` (feature `test-support`): o probe real recusaria os
+//! bytes do envio.
+//!
 //! O envio grande tem `SCRIBA_UPLOAD_MB` megabytes (padrão 256). O critério da Fase 3, 2 GB
 //! com a RAM estável, se mede com `SCRIBA_UPLOAD_MB=2048 cargo test --test upload -- --nocapture`.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use scriba::config::Paths;
-use scriba::jobs::Jobs;
+use scriba::jobs::{FakePipeline, Jobs};
 use scriba::web::{AppState, bind, serve};
 use tokio::io::AsyncWriteExt;
 
@@ -31,7 +35,7 @@ impl App {
     fn start() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let mut child = Command::new(env!("CARGO_BIN_EXE_scriba"))
-            .args(["--no-open", "--port", "0", "--data-dir"])
+            .args(["--no-open", "--fake-pipeline", "--port", "0", "--data-dir"])
             .arg(dir.path())
             .stdout(Stdio::piped())
             .spawn()
@@ -136,10 +140,10 @@ fn post_head(port: u16, token: &str, content_length: u64) -> String {
     )
 }
 
-/// O multipart antes e depois dos bytes do arquivo, com a opção Transcrever.
+/// O multipart antes e depois dos bytes do arquivo.
 fn multipart(file_name: &str) -> (String, String) {
     let head = format!(
-        "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"transcrever\"\r\n\r\n1\r\n--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"arquivo\"; filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"arquivo\"; filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
     );
     (head, format!("\r\n--{BOUNDARY}--\r\n"))
 }
@@ -232,7 +236,8 @@ async fn encerramento_nao_espera_envio_parado() {
     let listener = bind(0).unwrap();
     let port = listener.local_addr().unwrap().port();
     let paths = Paths::resolve(Some(dir.path().into()), Some(dir.path().join("saidas")));
-    let jobs = Jobs::without_worker(paths.uploads_dir()).unwrap();
+    let pipeline = Arc::new(FakePipeline::new(paths.output_dir.clone()));
+    let jobs = Jobs::without_worker(paths.uploads_dir(), pipeline).unwrap();
     let state = AppState::new("segredo".into(), "inst".into(), port, paths, jobs);
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(serve(

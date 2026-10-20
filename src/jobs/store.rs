@@ -11,7 +11,7 @@ use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio::sync::mpsc;
 
 use super::id::JobId;
-use super::model::{Event, Job, State};
+use super::model::{Event, Failure, Job, Probe, Stage, State};
 use super::pipeline::Pipeline;
 use super::worker::Worker;
 
@@ -30,6 +30,7 @@ struct Inner {
     entries: RwLock<BTreeMap<JobId, Entry>>,
     queue: mpsc::UnboundedSender<Msg>,
     stopping: AtomicBool,
+    pipeline: Arc<dyn Pipeline>,
 }
 
 struct Entry {
@@ -43,23 +44,39 @@ pub enum RemoveError {
     NotFound,
     /// Job na fila ou rodando: precisa ser cancelado antes.
     Active,
+    /// O job tem uma transcrição: removê-lo manda a pasta para a Lixeira, e isso precisa
+    /// ser confirmado.
+    NeedsConfirm,
+    /// A pasta da saída não foi para a Lixeira; o job continua na lista.
+    Trash,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RetryError {
+    NotFound,
+    /// Só um job que falhou volta para a fila.
+    NotFailed,
 }
 
 impl Jobs {
     /// Cria a fila e o worker que a processa com `pipeline`. Os arquivos que sobraram em
     /// `uploads` de uma execução anterior são apagados: a fila nasce vazia.
     pub fn start(uploads: PathBuf, pipeline: Arc<dyn Pipeline>) -> io::Result<(Self, Worker)> {
-        let (jobs, rx) = Self::create(uploads)?;
+        let (jobs, rx) = Self::create(uploads, pipeline.clone())?;
         let worker = Worker::spawn(jobs.clone(), rx, pipeline);
         Ok((jobs, worker))
     }
 
-    /// Fila sem worker: os jobs ficam "Na fila" (testes da camada web).
-    pub fn without_worker(uploads: PathBuf) -> io::Result<Self> {
-        Ok(Self::create(uploads)?.0)
+    /// Fila sem worker: os jobs ficam "Na fila" (testes da camada web). O pipeline só
+    /// atende ao probe e ao rodapé.
+    pub fn without_worker(uploads: PathBuf, pipeline: Arc<dyn Pipeline>) -> io::Result<Self> {
+        Ok(Self::create(uploads, pipeline)?.0)
     }
 
-    fn create(uploads: PathBuf) -> io::Result<(Self, mpsc::UnboundedReceiver<Msg>)> {
+    fn create(
+        uploads: PathBuf,
+        pipeline: Arc<dyn Pipeline>,
+    ) -> io::Result<(Self, mpsc::UnboundedReceiver<Msg>)> {
         clear_uploads(&uploads)?;
         let (queue, rx) = mpsc::unbounded_channel();
         let inner = Inner {
@@ -67,6 +84,7 @@ impl Jobs {
             entries: RwLock::default(),
             queue,
             stopping: AtomicBool::new(false),
+            pipeline,
         };
         Ok((Self(Arc::new(inner)), rx))
     }
@@ -78,6 +96,16 @@ impl Jobs {
     /// Onde gravar o arquivo enviado: o nome vem do id, nunca do cliente.
     pub fn upload_path(&self, id: JobId, ext: &str) -> PathBuf {
         self.0.uploads.join(format!("{id}.{ext}"))
+    }
+
+    /// O probe do pipeline para um arquivo recém-gravado. Bloqueia.
+    pub fn probe(&self, name: &str, input: &Path) -> Result<Probe, Failure> {
+        self.0.pipeline.probe(name, input)
+    }
+
+    /// Onde a transcrição roda, para o rodapé.
+    pub fn backend(&self) -> Option<String> {
+        self.0.pipeline.backend()
     }
 
     /// Põe o job (já com o arquivo gravado) na fila.
@@ -113,22 +141,50 @@ impl Jobs {
             }
             entry.job.clone()
         };
-        if job.state.is_terminal() {
+        if job.state == State::Canceled {
             remove_quietly(&job.input);
         }
         Some(job)
     }
 
-    /// Tira um job terminado da lista e apaga o que sobrou dele em `uploads`.
-    pub fn remove(&self, id: JobId) -> Result<(), RemoveError> {
-        let mut entries = self.write();
-        match entries.get(&id) {
-            None => return Err(RemoveError::NotFound),
-            Some(e) if !e.job.state.is_terminal() => return Err(RemoveError::Active),
-            Some(_) => {}
+    /// "Tentar de novo": o job que falhou volta para a fila com o mesmo envio.
+    pub fn retry(&self, id: JobId) -> Result<Job, RetryError> {
+        let job = {
+            let mut entries = self.write();
+            let entry = entries.get_mut(&id).ok_or(RetryError::NotFound)?;
+            entry.job.state = entry
+                .job
+                .state
+                .apply(Event::Retry)
+                .map_err(|_| RetryError::NotFailed)?;
+            // Um pedido de cancelamento antigo não vale para a nova tentativa.
+            entry.cancel = Arc::default();
+            entry.job.clone()
+        };
+        let _ = self.0.queue.send(Msg::Run(id));
+        Ok(job)
+    }
+
+    /// Tira um job terminado da lista e apaga o que sobrou dele em `uploads`. Num job
+    /// concluído, só com `confirmed`: a pasta da saída vai para a Lixeira antes.
+    pub fn remove(&self, id: JobId, confirmed: bool) -> Result<(), RemoveError> {
+        let job = self.get(id).ok_or(RemoveError::NotFound)?;
+        match &job.state {
+            state if !state.is_terminal() => return Err(RemoveError::Active),
+            State::Done { .. } if !confirmed => return Err(RemoveError::NeedsConfirm),
+            // Apagada fora do app: não há o que mandar para a Lixeira.
+            State::Done { outputs } if outputs.dir.exists() => {
+                crate::trash::move_to_trash(&outputs.dir).map_err(|e| {
+                    eprintln!(
+                        "não consegui mandar {} para a Lixeira: {e}",
+                        outputs.dir.display()
+                    );
+                    RemoveError::Trash
+                })?;
+            }
+            _ => {}
         }
-        if let Some(entry) = entries.remove(&id) {
-            drop(entries);
+        if let Some(entry) = self.write().remove(&id) {
             remove_quietly(&entry.job.input);
         }
         Ok(())
@@ -139,8 +195,11 @@ impl Jobs {
     pub(super) fn begin(&self, id: JobId) -> Option<(Job, Arc<AtomicBool>)> {
         let mut entries = self.write();
         let entry = entries.get_mut(&id)?;
-        let first = *entry.job.options.stages().first()?;
-        entry.job.state = entry.job.state.apply(Event::Start(first)).ok()?;
+        entry.job.state = entry
+            .job
+            .state
+            .apply(Event::Start(Stage::ExtractingAudio))
+            .ok()?;
         Some((entry.job.clone(), entry.cancel.clone()))
     }
 
@@ -151,6 +210,22 @@ impl Jobs {
         {
             entry.job.state = state;
         }
+    }
+
+    /// O fim do pipeline. O envio é apagado antes de publicar o fim (quem vê o job terminado
+    /// já não acha o arquivo), exceto se o job falhou: ele fica para o "Tentar de novo".
+    pub(super) fn finish(&self, id: JobId, event: Event) {
+        let mut entries = self.write();
+        let Some(entry) = entries.get_mut(&id) else {
+            return;
+        };
+        let Ok(state) = entry.job.state.apply(event) else {
+            return;
+        };
+        if !matches!(state, State::Failed { .. }) {
+            remove_quietly(&entry.job.input);
+        }
+        entry.job.state = state;
     }
 
     /// Encerramento: cancela o job em andamento e impede que outros comecem.
@@ -198,6 +273,6 @@ fn clear_uploads(dir: &Path) -> io::Result<()> {
     fs::create_dir_all(dir)
 }
 
-pub(super) fn remove_quietly(path: &Path) {
+fn remove_quietly(path: &Path) {
     let _ = fs::remove_file(path);
 }

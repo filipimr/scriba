@@ -6,6 +6,12 @@ all-features = false
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # `basic-toml` sem manutenção: só o proc-macro do askama 0.16.1 (a versão mais nova) o
+    # usa, para ler a configuração na compilação; não vai para o exe. Rever quando o
+    # askama trocar de parser.
+    { id = "RUSTSEC-2026-0374", reason = "dependência só de compilação do askama_derive" },
+]
 
 [licenses]
 version = 2

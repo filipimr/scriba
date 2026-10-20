@@ -88,6 +88,18 @@
     color: var(--color-ink-tertiary);
     cursor: not-allowed;
   }
+  /* Segunda ação: só contorno e texto em link (a borda de 1 px sai do padding). */
+  .btn-secondary {
+    padding: 10px 21px;
+    background: transparent;
+    color: var(--color-link);
+    border: 1px solid var(--color-link);
+  }
+  /* Só dentro do confirm-dialog, para a ação destrutiva já pedida. */
+  .btn-danger {
+    background: var(--color-danger);
+    color: var(--color-on-primary);
+  }
   .btn-icon {
     @apply inline-flex shrink-0 items-center justify-center rounded-pill;
     width: 44px;
@@ -205,6 +217,10 @@
   .job-card .alert-inline {
     margin-top: var(--spacing-xxs);
   }
+  .job-card-actions {
+    @apply flex flex-wrap gap-xs;
+    margin-top: var(--spacing-xs);
+  }
   /* Com itens, a lista substitui o estado vazio. */
   .recentes:has(.job-card) .empty-state {
     display: none;
@@ -290,6 +306,47 @@
   .record-hint {
     @apply text-footnote;
     color: var(--color-on-dark-secondary);
+  }
+
+  .confirm-dialog {
+    @apply rounded-lg;
+    margin: auto;
+    width: calc(100% - 2 * var(--spacing-md));
+    max-width: 440px;
+    padding: var(--spacing-xl);
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    border: 1px solid transparent;
+    box-shadow: var(--shadow-floating);
+  }
+  /* A sombra quase some sobre preto: no escuro, a borda hairline marca a borda. */
+  [data-theme="dark"] .confirm-dialog {
+    border-color: var(--color-hairline);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .confirm-dialog {
+      border-color: var(--color-hairline);
+    }
+  }
+  .confirm-dialog::backdrop {
+    background: color-mix(in srgb, var(--color-surface-black) 40%, transparent);
+  }
+  .confirm-dialog[open] {
+    animation: dialog-in var(--motion-duration-base) var(--motion-easing);
+  }
+  .confirm-dialog-text {
+    @apply mt-xs text-body;
+    overflow-wrap: anywhere;
+    color: var(--color-ink-secondary);
+  }
+  .confirm-dialog-actions {
+    @apply mt-lg flex flex-wrap justify-end gap-xs;
+  }
+  @keyframes dialog-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
   }
 
   .empty-state {

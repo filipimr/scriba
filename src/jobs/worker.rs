@@ -11,7 +11,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use super::id::JobId;
 use super::model::Event;
 use super::pipeline::{Ctx, Pipeline};
-use super::store::{Jobs, Msg, remove_quietly};
+use super::store::{Jobs, Msg};
 
 pub struct Worker {
     jobs: Jobs,
@@ -77,9 +77,7 @@ fn run_one(jobs: &Jobs, id: JobId, pipeline: &dyn Pipeline) {
         progress.apply(id, Event::Progress(stage, pct));
     });
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| pipeline.run(&job, &ctx)));
-    // Apaga antes de publicar o fim: quem vê o job terminado já não acha o envio.
-    remove_quietly(&job.input);
-    jobs.apply(
+    jobs.finish(
         id,
         match outcome {
             Ok(result) => Event::Finished(result),

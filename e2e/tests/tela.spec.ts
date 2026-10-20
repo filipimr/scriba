@@ -6,6 +6,9 @@ test("a página inicial carrega", async ({ page, scriba }) => {
   await expect(page.getByRole("heading", { name: "Solte um vídeo ou áudio aqui" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recentes" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Tema: Sistema" })).toBeVisible();
+  // Sem as caixinhas: todo arquivo extrai o áudio e transcreve.
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.locator("footer")).toContainText("· Transcrição no processador");
 });
 
 test("sem o token a página é recusada", async ({ request, scriba }) => {

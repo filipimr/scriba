@@ -26,7 +26,7 @@ expression: html
       <h3 class="job-card-name" title="Reunião &#60;equipe&#62;.mp4">Reunião &#60;equipe&#62;.mp4</h3>
       <span class="status-badge status-badge-active">Processando</span>
     </div>
-    <p class="job-card-meta">312 MB</p>
+    <p class="job-card-meta">47 min · 312 MB · <span class="job-card-date">20/10/2026 14:30</span></p>
     <p class="job-card-stage">Transcrevendo… 42%</p>
     <progress class="progress-bar" max="100" value="42" aria-label="Progresso de Reunião &#60;equipe&#62;.mp4"></progress>
   </div>

@@ -6,10 +6,13 @@ license = "GPL-3.0-or-later"
 publish = false
 
 [features]
-# Embute o modelo base e a amostra usados pelo `--self-test` (release do CI).
+# Embute o modelo base, o VAD e a amostra usados pelo `--self-test` (release do CI).
 embedded-test-model = ["scriba-model/embedded-test-model"]
 # whisper.cpp com backend Vulkan (exige o Vulkan SDK no build): `cargo run --features vulkan`.
 vulkan = ["whisper-rs/vulkan"]
+# O pipeline falso (`FakePipeline`) e a flag `--fake-pipeline`, para o E2E e os testes que
+# sobem o exe sem transcrever.
+test-support = []
 
 [dependencies]
 scriba-model = { path = "crates/scriba-model" }
@@ -21,7 +24,6 @@ dirs.workspace = true
 ffmpeg-next.workspace = true
 getrandom.workspace = true
 hex.workspace = true
-hound.workspace = true
 open.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -35,6 +37,11 @@ insta.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
 tower.workspace = true
+
+# Sobe o exe com `--fake-pipeline`: o probe real recusaria os bytes do envio.
+[[test]]
+name = "upload"
+required-features = ["test-support"]
 
 [workspace]
 members = ["crates/scriba-model", "crates/spikes", "xtask"]
@@ -69,8 +76,9 @@ tower = { version = "0.5.3", features = ["util"] }
 ureq = "3.4.2"
 # `raw-api`: o registro de dispositivos do ggml, o VAD carregado da memória e o log.
 whisper-rs = { version = "0.16.0", features = ["raw-api"] }
-# Hora local e fuso (GetLocalTime/GetSystemTime); nos testes, o pico de memória do processo.
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+# Hora local e fuso (GetLocalTime/GetSystemTime), a Lixeira (SHFileOperationW); nos testes, o
+# pico de memória do processo.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell"] }
 
 [profile.release]
 lto = "thin"

@@ -17,10 +17,12 @@ pub struct Layout {
     pub favicon: String,
     pub logo: String,
     pub version: &'static str,
+    /// Onde a transcrição roda, no rodapé.
+    pub backend: Option<String>,
 }
 
 impl Layout {
-    fn new() -> Self {
+    fn new(backend: Option<String>) -> Self {
         Self {
             css: assets::url("app.css"),
             htmx: assets::url("vendor/htmx.min.js"),
@@ -28,6 +30,7 @@ impl Layout {
             favicon: assets::url("brand/logo-16.svg"),
             logo: assets::url("brand/logo-white.svg"),
             version: env!("CARGO_PKG_VERSION"),
+            backend,
         }
     }
 }
@@ -40,7 +43,6 @@ struct IndexPage {
     jobs: Vec<Card>,
     accept: String,
     format_error: String,
-    no_options: &'static str,
 }
 
 #[derive(Template)]
@@ -58,12 +60,11 @@ fn render(t: &impl Template) -> Response {
 
 pub async fn index(State(state): State<AppState>) -> Response {
     render(&IndexPage {
-        layout: Layout::new(),
+        layout: Layout::new(state.jobs.backend()),
         theme: state.config().theme,
         jobs: state.jobs.list().iter().map(Card::new).collect(),
         accept: jobs::accept(),
         format_error: jobs::format_error(),
-        no_options: jobs::NO_OPTIONS,
     })
 }
 
