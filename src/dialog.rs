@@ -23,6 +23,12 @@ pub trait SaveDialog: Send + Sync {
 /// Título da janela.
 pub const TITLE: &str = "Guardar áudio";
 
+/// O caminho como o shell aceita: absoluto e só com `\` (com `/`, o
+/// `SHCreateItemFromParsingName` recusa a pasta e a janela abre em Documentos).
+fn shell_path(dir: &std::path::Path) -> PathBuf {
+    std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf())
+}
+
 /// O `IFileSaveDialog` do Windows, numa thread própria com COM em STA.
 pub struct SystemDialog;
 
@@ -89,7 +95,7 @@ mod win {
             // `SetFolder`, e não `SetDefaultFolder`: a pasta lembrada pelo app vale mais que a
             // última que o Windows guardou. O shell recusa `/` no caminho (o `absolute` troca
             // por `\`). Pasta que sumiu: fica a do Windows.
-            let dir = std::path::absolute(&request.dir).unwrap_or_else(|_| request.dir.clone());
+            let dir = super::shell_path(&request.dir);
             let folder: windows::core::Result<IShellItem> =
                 SHCreateItemFromParsingName(&HSTRING::from(dir.as_os_str()), None);
             match folder {
@@ -274,6 +280,25 @@ impl SaveDialog for ScriptedDialog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caminho_para_o_shell_so_tem_contrabarra() {
+        assert_eq!(
+            shell_path(std::path::Path::new(
+                r"C:\Users\Ana\AppData\Local\Temp/scriba/saidas/2026-10-20 1430 - Reunião"
+            )),
+            PathBuf::from(
+                r"C:\Users\Ana\AppData\Local\Temp\scriba\saidas\2026-10-20 1430 - Reunião"
+            )
+        );
+        let relative = shell_path(std::path::Path::new("saidas/a"));
+        assert!(relative.is_absolute(), "{}", relative.display());
+        assert!(
+            !relative.to_string_lossy().contains('/'),
+            "{}",
+            relative.display()
+        );
+    }
 
     #[test]
     fn roteiro_responde_o_arquivo_ou_cancela() {
