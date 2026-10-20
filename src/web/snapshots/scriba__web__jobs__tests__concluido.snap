@@ -27,6 +27,61 @@ expression: html
       <span class="status-badge status-badge-success">Concluído</span>
     </div>
     <p class="job-card-meta">47 min · 312 MB · <span class="job-card-date">20/10/2026 14:30</span></p>
+    <div class="job-card-actions">
+      <a class="btn btn-primary" href="/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0" aria-label="Ver transcrição de Reunião &#60;equipe&#62;.mp4">Ver transcrição</a>
+      <a class="btn btn-secondary" href="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/transcricao.txt" download="Reunião equipe - transcrição.txt" aria-label="Baixar .txt de Reunião &#60;equipe&#62;.mp4"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-download"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 15V3" />
+  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+  <path d="m7 10 5 5 5-5" />
+</svg>Baixar .txt</a>
+      <a class="btn btn-secondary" href="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/transcricao.md" download="Reunião equipe - transcrição.md" aria-label="Baixar .md de Reunião &#60;equipe&#62;.mp4"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-download"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 15V3" />
+  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+  <path d="m7 10 5 5 5-5" />
+</svg>Baixar .md</a>
+      <button class="btn btn-utility" type="button" hx-post="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/open" hx-swap="none" aria-label="Abrir pasta de Reunião &#60;equipe&#62;.mp4"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-folder-open"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+</svg>Abrir pasta</button>
+    </div>
   </div>
   <button id="acao-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" class="btn-icon" type="button" aria-label="Remover Reunião &#60;equipe&#62;.mp4" title="Remover" hx-delete="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0?confirm=1" hx-confirm="A pasta “2026-10-20 1430 - Reunião equipe” vai para a Lixeira." hx-target="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" hx-swap="outerHTML" hx-sync="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0:replace"><!-- @license lucide-static v1.59.0 - ISC -->
 <svg

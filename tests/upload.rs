@@ -238,7 +238,14 @@ async fn encerramento_nao_espera_envio_parado() {
     let paths = Paths::resolve(Some(dir.path().into()), Some(dir.path().join("saidas")));
     let pipeline = Arc::new(FakePipeline::new(paths.output_dir.clone()));
     let jobs = Jobs::without_worker(paths.uploads_dir(), pipeline).unwrap();
-    let state = AppState::new("segredo".into(), "inst".into(), port, paths, jobs);
+    let state = AppState::new(
+        "segredo".into(),
+        "inst".into(),
+        port,
+        paths,
+        jobs,
+        std::sync::Arc::new(scriba::opener::SystemOpener),
+    );
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(serve(
         listener,

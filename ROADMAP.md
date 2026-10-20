@@ -323,7 +323,7 @@ O plano da fase a divide em seis etapas, cada uma com o próprio PR: 4.1 whisper
   - Mostrar na UI qual backend está em uso e uma estimativa de tempo antes de começar.
 - [x] `transcript`: parágrafos (pausa > 1,5 s quebra), `[hh:mm:ss]` em cada parágrafo e cabeçalho (origem, data, duração). Gera `transcricao.txt`, `transcricao.md` e `job.json`.
 - [x] Fluxo automático: o envio deixa de ter as opções "Transcrever" e "Compactar". Todo job extrai o áudio e transcreve; a pergunta "Guardar o áudio?" entra na Fase 5.
-- [ ] UI: leitor da transcrição, Copiar texto, Baixar .txt, Baixar .md e Abrir pasta.
+- [x] UI: leitor da transcrição, Copiar texto, Baixar .txt, Baixar .md e Abrir pasta (etapa 4.5).
 - [x] Herdado da Fase 3 (etapa 4.4):
   - O pipeline real substitui o falso no app; o falso vai para a feature `test-support`, com a flag `--fake-pipeline` para o E2E.
   - "Tentar de novo" no job que falhou (o envio fica guardado até a nova tentativa).
@@ -338,7 +338,7 @@ O plano da fase a divide em seis etapas, cada uma com o próprio PR: 4.1 whisper
   - Silêncio puro → texto vazio, sem frases-fantasma.
   - Cancelar no meio interrompe a transcrição.
   - Arquivo sem áudio → erro amigável.
-- [ ] E2E: upload → texto visível → copiar → .txt e .md baixados com o conteúdo certo.
+- [x] E2E: upload → texto visível → copiar → .txt e .md baixados com o conteúdo certo.
 - [x] Unitário: a escolha do backend prefere GPU dedicada (a de mais memória), depois CPU com o modelo menor; a integrada fica de fora (com uma lista de dispositivos falsa).
 - [x] Local: benchmark em cada backend (RTX, Intel integrada e só CPU), com 45,5 min de fala real do FLEURS pt_br no lugar de 1 h (etapa 4.3).
 - [ ] Local: pico de RAM e tempo com 1 h e 3 h de áudio, com a transcrição em blocos de ~30 min (meta: ≤ ~1,5 GB em qualquer duração). (O item "compactar antes acelera?" saiu com a compactação.)
@@ -559,6 +559,12 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-20 | Fase 4 | Remover um job concluído: `DELETE /api/jobs/{id}` exige `?confirm=1` (409 sem) e manda a pasta da saída para a Lixeira (`SHFileOperationW` com `FOF_ALLOWUNDO`, `src/trash.rs`); pasta já apagada fora do app não impede. Na tela, `hx-confirm` abre o `confirm-dialog` (`<dialog>` modal pelo `htmx:confirm`) com o foco em "Cancelar". O `confirm-dialog`, o "Tentar de novo" e os `btn-secondary`/`btn-danger` foram antecipados da 4.5 | Itens herdados da Fase 3 no escopo da 4.4. Custo aceito: os testes da Lixeira deixam pastas pequenas na Lixeira da máquina |
 | 2026-10-20 | Fase 4 | Feature `test-support`: o `FakePipeline` (grava uma transcrição fixa com o `transcript` real; ganchos novos `sem-audio` e `falha-uma-vez`) e a flag `--fake-pipeline`. O `tests/upload.rs` tem `required-features`; o CI passa `scriba/test-support` no clippy, nos testes e no build do E2E. O `--self-test` usa `media` e `asr` (sem o whisper duplicado), e o `embedded-test-model` embute também o VAD (+0,9 MB); o `hound` sai das dependências do `scriba` | O probe real recusaria os bytes falsos do E2E e do upload |
 | 2026-10-20 | Fase 4 | `cargo deny` ignora o RUSTSEC-2026-0374 (`basic-toml` sem manutenção), com o motivo no `deny.toml` | Só o proc-macro do askama 0.16.1, a versão mais nova, o usa na compilação; nada vai para o exe. Rever quando o askama trocar de parser |
+| 2026-10-20 | Fase 4 | Etapa 4.5: o leitor (`GET /jobs/{id}`, `src/web/reader.rs`) lê o `.txt` do disco com `transcript::parse`; os metadados vêm do job. Sem fala, `empty-state`; `.txt` apagado fora do app, `alert-inline` com a pasta e sem as ações; id fora da lista ou job não concluído, 404 com a mesma página ("Não encontrei esta transcrição na lista de Recentes.", porque a lista começa vazia a cada execução) | O leitor mostra o que está em disco, inclusive um `.txt` editado à mão |
+| 2026-10-20 | Fase 4 | Downloads em duas rotas explícitas (`/api/jobs/{id}/transcricao.txt` e `.md`), com `Content-Disposition` `filename="transcricao.<ext>"` (ASCII fixo) e `filename*=UTF-8''` com o nome original limpo por `clean_name` ("Reunião - transcrição.md"), em percent-encoding próprio (RFC 5987), sem crate novo. No `app.js`, o clique baixa por `fetch` → `blob:` com o nome do atributo `download`, para um erro (arquivo apagado) virar toast; sem JS, o link baixa sozinho | Erro de ação sempre na tela, nunca um "Falha no download" do navegador |
+| 2026-10-20 | Fase 4 | "Abrir pasta": `POST /api/jobs/{id}/open` (204), pelo trait `Opener` no `AppState` (`src/opener.rs`). O app usa o `open::that_detached`; com `--fake-pipeline`, o `PrintOpener` só imprime `abrir pasta: <dir>` no stdout, que a fixture do E2E lê (`scriba.opened()`). Pasta apagada: 404 com a mensagem, sem chamar o opener | Testável sem abrir o Explorer na máquina nem no runner |
+| 2026-10-20 | Fase 4 | "Copiar texto" copia o `.txt` inteiro (cabeçalho e marcações de tempo) de um `<template>`, porque a CSP proíbe script inline. O parser do HTML troca CRLF por LF; o `app.js` volta o CRLF, e o texto copiado fica idêntico ao arquivo baixado (E2E) | Decisão 5 do plano da fase |
+| 2026-10-20 | Fase 4 | Toast no rodapé central (`#toasts`, `aria-live="polite"`): "Texto copiado" some em 3 s; os erros das ações (POST e DELETE do htmx, downloads) mostram o texto da resposta por 6 s, sem cor de status. Os 409 e 500 do Remover, antes silenciosos, também aparecem | O erro precisa de tempo para ser lido |
+| 2026-10-20 | Fase 4 | Design: `button-utility` com 44 px de altura (o padding de 8 px dava ~36 px, abaixo do alvo mínimo); `transcript-view` com `{rounded.lg}`; tempo do leitor como `00:00:08`, sem colchetes, na mesma linha do parágrafo. Ícones Lucide novos: copy, download, folder-open e chevron-left (lucide-static 1.59.0) | Acessibilidade (alvos de 44 × 44 px) |
 | 2026-10-20 | Fase 4 | `windows-sys` com `Win32_UI_Shell` (Lixeira). Referências visuais do E2E regeradas (dropzone sem caixinhas, rodapé, metadados), com a data do card mascarada | Reprodutibilidade |
 
 ## Referências verificadas

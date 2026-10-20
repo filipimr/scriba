@@ -22,7 +22,7 @@ pub struct Layout {
 }
 
 impl Layout {
-    fn new(backend: Option<String>) -> Self {
+    pub(super) fn new(backend: Option<String>) -> Self {
         Self {
             css: assets::url("app.css"),
             htmx: assets::url("vendor/htmx.min.js"),
@@ -51,7 +51,7 @@ struct ThemeToggle {
     theme: Theme,
 }
 
-fn render(t: &impl Template) -> Response {
+pub(super) fn render(t: &impl Template) -> Response {
     match t.render() {
         Ok(html) => Html(html).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),

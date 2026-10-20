@@ -187,6 +187,7 @@ components:
     typography: "{typography.caption}"
     rounded: "{rounded.sm}"
     padding: 8px 15px
+    height: 44px
   button-icon:
     backgroundColor: "{colors.divider-soft}"
     textColor: "{colors.ink}"
@@ -303,6 +304,7 @@ components:
     backgroundColor: "{colors.canvas}"
     textColor: "{colors.ink}"
     typography: "{typography.transcript}"
+    rounded: "{rounded.lg}"
     maxWidth: 720px
     padding: 48px
   transcript-timestamp:
@@ -374,6 +376,7 @@ O arquivo de origem está em `docs/brand/logo-original.jpg`. As versões vetoria
 - Traço de 1,75 px em grade de 24 px, com pontas e junções arredondadas — o mesmo desenho do logo.
 - Cor herdada do texto (`currentColor`). Nunca preenchidos, exceto o círculo do botão de gravar.
 - Tamanhos: 16 px junto de caption, 20 px junto de body, 24 px em botões de ícone.
+- Nos botões com texto, o ícone vem antes do rótulo: copy em "Copiar texto", download em "Baixar .txt" e "Baixar .md", folder-open em "Abrir pasta"; chevron-left no link "Recentes" do leitor.
 
 ## Cores
 
@@ -508,7 +511,7 @@ Regras do tema escuro:
 | --- | --- |
 | ≥ 1024px | Gravação e dropzone lado a lado |
 | 768–1023px | Gravação acima, dropzone abaixo |
-| 480–767px | Padding de card cai para 16 px; ações do job-card quebram em linha |
+| 480–767px | Padding de card e do leitor cai para 16 px; ações do job-card e do leitor quebram em linha |
 | < 480px | Header mostra só o ícone; títulos `display` caem para 28 px |
 
 ## Elevação
@@ -528,7 +531,7 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 | --- | --- | --- |
 | `{rounded.sm}` | 8px | Botões utilitários |
 | `{rounded.md}` | 12px | Selects, alertas, toasts |
-| `{rounded.lg}` | 18px | Cards, dropzone, painel de gravação, diálogos |
+| `{rounded.lg}` | 18px | Cards, dropzone, painel de gravação, diálogos, leitor |
 | `{rounded.icon}` | 22% | Ícone do app |
 | `{rounded.pill}` | 9999px | Botões de ação, opções, badges, botão de gravar, barras de progresso |
 
@@ -554,15 +557,15 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 **`button-primary`** — Ação principal: fundo `{colors.primary}`, texto branco em `{typography.body}`, pílula, padding 11 × 22 px. Pressionado: `{component.button-primary-active}` com `scale(0.97)`. Desabilitado: `{component.button-primary-disabled}`. Foco: anel de 2 px em `{colors.primary-focus}` com 2 px de afastamento.
 
-**`button-secondary`** — Segunda ação ao lado de uma primária ("Baixar .txt" ao lado de "Copiar texto"): fundo transparente, texto e borda de 1 px em `{colors.link}`, pílula.
+**`button-secondary`** — Segunda ação ao lado de uma primária ("Baixar .txt" e "Baixar .md" ao lado de "Copiar texto" ou "Ver transcrição"): fundo transparente, texto e borda de 1 px em `{colors.link}`, pílula.
 
-**`button-utility`** — Ações compactas e de baixa ênfase dentro de cards ("Abrir pasta"): fundo `{colors.surface-dark}`, texto branco em `{typography.caption}`, `{rounded.sm}`, padding 8 × 15 px.
+**`button-utility`** — Ações compactas e de baixa ênfase dentro de cards e do leitor ("Abrir pasta"): fundo `{colors.surface-dark}`, texto branco em `{typography.caption}`, `{rounded.sm}`, padding 8 × 15 px e 44 px de altura (o alvo mínimo de clique), com ícone de 16 px.
 
 **`button-icon`** — Botão quadrado de 44 px com só um ícone (cancelar, excluir, fechar): fundo `{colors.divider-soft}`, ícone em `{colors.ink}`, pílula. Sempre com `aria-label`.
 
 **`button-danger`** — Só dentro de `confirm-dialog`, para a ação destrutiva confirmada ("Excluir"). Fundo `{colors.danger}`, igual nos dois temas. É a única exceção em que uma cor de status preenche um botão, e só depois que o usuário pediu a ação.
 
-**`text-link`** / **`text-link-on-dark`** — Links no texto, em `{colors.link}` (que se ajusta ao tema) e em `{colors.primary-on-dark}` dentro de superfícies sempre escuras, como o header e o painel de gravação.
+**`text-link`** / **`text-link-on-dark`** — Links no texto, em `{colors.link}` (que se ajusta ao tema) e em `{colors.primary-on-dark}` dentro de superfícies sempre escuras, como o header e o painel de gravação. Sem sublinhado; com ícone, ele vem antes do texto ("‹ Recentes" no leitor), e a área de clique tem 44 px de altura.
 
 ### Arquivos e jobs
 
@@ -581,7 +584,7 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 - À direita do card, um único `{component.button-icon}` de ação, que mantém o foco do teclado quando o card se atualiza.
 - Na fila: o badge, o botão de cancelar e, abaixo dos metadados, a estimativa no mesmo estilo: "Cerca de 4 min na GPU", "Menos de 1 min no processador".
 - Ativo: etapa atual ("Transcrevendo… 42%") e `{component.progress-bar}`, com o botão de cancelar. Depois do pedido, a etapa vira "Cancelando…" e o botão fica inativo até o pipeline parar.
-- Concluído: `{component.button-primary}` "Ver transcrição", `{component.button-secondary}` "Baixar .txt", `{component.button-utility}` "Abrir pasta".
+- Concluído: uma linha própria abaixo dos metadados com `{component.button-primary}` "Ver transcrição", `{component.button-secondary}` "Baixar .txt" e "Baixar .md" e `{component.button-utility}` "Abrir pasta". A linha quebra quando não cabe. Para leitores de tela, cada ação leva o nome do arquivo ("Baixar .txt de reuniao.mp4").
 - Falhou: mensagem em `{component.alert-inline}` e, logo abaixo, `{component.button-secondary}` "Tentar de novo", que devolve o job à fila com o mesmo arquivo.
 - Concluído, Falhou ou Cancelado: o botão de ação vira "Remover" (lixeira), que tira o job da lista. Em Falhou e Cancelado, remover só apaga a cópia temporária do envio e não pede confirmação; em Concluído, a pasta da transcrição vai para a Lixeira, depois do `{component.confirm-dialog}`.
 
@@ -610,18 +613,23 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 ### Transcrição
 
-**`transcript-view`** — A tela de leitura. Fundo branco, coluna de no máximo 720 px, padding 48 px.
+**`transcript-view`** — A tela de leitura (`/jobs/{id}`), lida do `.txt` em disco. Fundo branco, `{rounded.lg}`, coluna de no máximo 720 px, padding 48 px (16 px abaixo de 768 px).
 
-- Cabeçalho: título (nome do arquivo ou "Gravação de 16/10, 14:30") em `{typography.title}`, metadados em `{typography.caption}`, e ações "Copiar texto" (primária), "Baixar .txt" (secundária), "Abrir pasta" (utilitária).
-- Parágrafos em `{typography.transcript}`, cada um começando com a marcação de tempo (`{component.transcript-timestamp}`) e, em gravações, o rótulo do falante (`{component.transcript-speaker}`: "Você" / "Outros").
-- O texto é selecionável e copiável como texto puro.
+- Acima do título, o `{component.text-link}` "‹ Recentes" (ícone chevron-left), que volta à lista.
+- Cabeçalho: título (nome do arquivo ou "Gravação de 16/10, 14:30") em `{typography.title}`, metadados em `{typography.caption}` `{colors.ink-secondary}` (os mesmos do card: "47 min · 312 MB · 20/10/2026 14:30"), e as ações "Copiar texto" (primária), "Baixar .txt" e "Baixar .md" (secundárias), "Abrir pasta" (utilitária).
+- Parágrafos em `{typography.transcript}`, cada um começando com a marcação de tempo (`{component.transcript-timestamp}`, "00:00:08", na mesma linha) e, em gravações, o rótulo do falante (`{component.transcript-speaker}`: "Você" / "Outros"). Texto fora do formato (editado à mão) aparece como está, sem tempo e com as quebras de linha.
+- O texto é selecionável e copiável como texto puro. "Copiar texto" copia o `.txt` inteiro, com o cabeçalho e as marcações de tempo.
 - Ao copiar, um `{component.toast}` confirma: "Texto copiado".
+- Sem fala: `{component.empty-state}` "Nenhuma fala encontrada neste arquivo.", com as ações.
+- Transcrição ausente (apagada fora do app): `{component.alert-inline}` "Não encontrei a transcrição em C:\…\2026-10-20 1430 - Reunião.", sem as ações. Um job fora da lista (a lista começa vazia quando o app é reaberto): "Não encontrei esta transcrição na lista de Recentes.".
 
 ### Feedback
 
 **`alert-inline`** — Mensagem presa a um elemento (erro de upload, falha do job): fundo e texto da família de status, `{rounded.md}`, ícone à esquerda, `{typography.callout}`. Variantes por troca das cores de erro, aviso e sucesso.
 
-**`toast`** — Confirmação passageira no rodapé central: fundo `{colors.surface-dark}`, texto branco, `{rounded.md}`, `{elevation.floating}`. Some após 3 s. Anunciado com `aria-live="polite"`.
+**`toast`** — Confirmação passageira no rodapé central: fundo `{colors.surface-dark}`, texto branco em `{typography.callout}`, `{rounded.md}`, padding 12 × 20 px, `{elevation.floating}` (no escuro, com borda hairline, como o diálogo). Some após 3 s. Anunciado com `aria-live="polite"`; um novo substitui o anterior.
+
+- Também mostra o erro de uma ação ("Não encontrei a pasta “2026-10-20 1430 - Reunião”. Ela foi movida ou apagada."), no mesmo estilo e sem cor de status: o texto diz o que houve. O erro fica 6 s, para dar tempo de ler.
 
 **`confirm-dialog`** — Só para ações destrutivas (excluir job e arquivos). Fundo branco, `{rounded.lg}`, padding 32 px, `{elevation.floating}`, sobre um véu preto a 40%, com até 440 px de largura. Título em `{typography.headline}`, texto explicando o que será apagado, `{component.button-secondary}` "Cancelar" e `{component.button-danger}` "Excluir", alinhados à direita. Remover um job concluído: "Excluir a transcrição?" / "A pasta “2026-10-19 1430 - Reunião” vai para a Lixeira.".
 
@@ -645,7 +653,8 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 ## Voz e microcopy
 
 - Português do Brasil, frases curtas, tratamento por "você".
-- Botões com verbos diretos: "Gravar", "Parar", "Escolher arquivo", "Copiar texto", "Baixar .txt", "Abrir pasta", "Tentar de novo", "Excluir".
+- Botões com verbos diretos: "Gravar", "Parar", "Escolher arquivo", "Ver transcrição", "Copiar texto", "Baixar .txt", "Baixar .md", "Abrir pasta", "Tentar de novo", "Excluir".
+- Confirmações curtas, sem ponto: "Texto copiado".
 - Etapas no gerúndio: "Na fila", "Extraindo áudio…", "Transcrevendo… 42%", "Cancelando…".
 - Estimativas arredondadas e sem falsa precisão: "Cerca de 4 min na GPU", "Menos de 1 min no processador". "Processador" no lugar de "CPU".
 - Erros dizem o que aconteceu e o que fazer: "Este arquivo não tem áudio. Escolha um vídeo com som." — nunca códigos ou jargão técnico.
@@ -689,4 +698,5 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 - **Logo vetorial:** resolvido na Fase 2 (SVGs em `docs/brand/`). Falta o `.ico` do executável e da bandeja, que sai na Fase 7 junto com o ícone da bandeja.
 - **Ilustrações de estado vazio:** a v1 usa apenas ícones Lucide.
 - **Ícone da bandeja do Windows:** precisa de variantes clara e escura, conforme o tema da barra de tarefas.
-- **Card concluído e leitor:** "Ver transcrição", "Baixar .txt", "Baixar .md", "Abrir pasta", o `transcript-view` e o `toast` chegam na etapa 4.5; até lá, o card concluído só tem o Remover. Resolvidos na 4.4: a dropzone sem as caixinhas, o estilo do "Tentar de novo", o backend no rodapé e a estimativa no card, e o texto do `confirm-dialog`.
+- **Card concluído e leitor:** resolvido na etapa 4.5: as ações do card concluído ("Ver transcrição", "Baixar .txt", "Baixar .md", "Abrir pasta") numa linha própria, o `transcript-view` com o "‹ Recentes" e os estados sem fala e de transcrição ausente, o `toast` (também para os erros de ação) e o `button-utility` com 44 px de altura. Resolvidos na 4.4: a dropzone sem as caixinhas, o estilo do "Tentar de novo", o backend no rodapé e a estimativa no card, e o texto do `confirm-dialog`.
+- **Link para a pasta de saídas no rodapé:** descrito em `footer`, ainda não implementado; o "Abrir pasta" de cada job cobre o caso por enquanto.

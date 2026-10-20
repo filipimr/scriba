@@ -12,6 +12,7 @@ use axum::response::{Html, IntoResponse, Response};
 use tokio::io::{AsyncWriteExt, BufWriter};
 
 use super::AppState;
+use super::reader::{Kind, download_name, folder_label};
 use crate::clock::LocalTime;
 use crate::jobs::{
     Estimate, FORMATS, Failure, Job, JobId, Jobs, Media, PANIC_MESSAGE, Probe, RemoveError,
@@ -63,8 +64,17 @@ pub struct Card {
     pub error: Option<String>,
     /// Falhou: oferece "Tentar de novo".
     pub retry: bool,
-    /// Concluído: a pasta da saída, que o Remover manda para a Lixeira depois do diálogo.
-    pub folder: Option<String>,
+    /// Concluído: as ações do resultado e a pasta que o Remover manda para a Lixeira.
+    pub done: Option<Done>,
+}
+
+/// O que o card concluído oferece.
+pub struct Done {
+    /// Nome da pasta da saída, no texto do `confirm-dialog`.
+    pub folder: String,
+    /// Nomes sugeridos dos downloads ("Reunião - transcrição.txt").
+    pub txt_name: String,
+    pub md_name: String,
 }
 
 impl Card {
@@ -109,13 +119,12 @@ impl Card {
                 _ => None,
             },
             retry: matches!(job.state, JobState::Failed { .. }),
-            folder: match &job.state {
-                JobState::Done { outputs } => Some(
-                    outputs
-                        .dir
-                        .file_name()
-                        .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
-                ),
+            done: match &job.state {
+                JobState::Done { outputs } => Some(Done {
+                    folder: folder_label(&outputs.dir),
+                    txt_name: download_name(&job.name, Kind::Txt),
+                    md_name: download_name(&job.name, Kind::Md),
+                }),
                 _ => None,
             },
         }

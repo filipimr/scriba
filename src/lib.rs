@@ -9,6 +9,7 @@ pub mod engine;
 pub mod instance;
 pub mod jobs;
 pub mod media;
+pub mod opener;
 pub mod self_test;
 pub mod transcript;
 pub mod trash;

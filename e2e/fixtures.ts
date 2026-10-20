@@ -12,14 +12,21 @@ function exe(): string {
   return join(target, "debug", "scriba.exe");
 }
 
+/** Junta o stdout do processo. */
+function collect(child: ChildProcess): () => string {
+  let out = "";
+  child.stdout!.on("data", (chunk: Buffer) => {
+    out += chunk.toString();
+  });
+  return () => out;
+}
+
 /** Espera o scriba anunciar a URL de entrada (com o token) no stdout. */
-function announced(child: ChildProcess): Promise<string> {
+function announced(child: ChildProcess, stdout: () => string): Promise<string> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("o scriba não anunciou a URL em 30 s")), 30_000);
-    let out = "";
-    child.stdout!.on("data", (chunk: Buffer) => {
-      out += chunk.toString();
-      const m = out.match(/Scriba em (http\S+)/);
+    child.stdout!.on("data", () => {
+      const m = stdout().match(/Scriba em (http\S+)/);
       if (m) {
         clearTimeout(timer);
         resolve(m[1]);
@@ -36,6 +43,8 @@ export type Scriba = {
   origin: string;
   /** Pasta das saídas (`--output-dir`). */
   outputDir: string;
+  /** As pastas que o "Abrir pasta" pediu, na ordem (o pipeline falso só as imprime). */
+  opened: () => string[];
 };
 
 /**
@@ -50,9 +59,11 @@ export const test = base.extend<{ scriba: Scriba }>({
     const child = spawn(exe(), ["--no-open", "--fake-pipeline", "--port", "0", "--data-dir", dataDir, "--output-dir", outputDir], {
       stdio: ["ignore", "pipe", "inherit"],
     });
+    const stdout = collect(child);
+    const opened = () => [...stdout().matchAll(/^abrir pasta: (.+?)\r?$/gm)].map((m) => m[1]);
     try {
-      const url = await announced(child);
-      await use({ url, origin: new URL(url).origin, outputDir });
+      const url = await announced(child, stdout);
+      await use({ url, origin: new URL(url).origin, outputDir, opened });
     } finally {
       if (child.exitCode === null) {
         const exited = once(child, "exit");
