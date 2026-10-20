@@ -1,9 +1,11 @@
 //! O pipeline do app: `media` extrai o áudio para um arquivo temporário ao lado do envio,
 //! `asr` transcreve lendo um bloco por vez e `transcript` grava a pasta da saída com o
 //! `.txt`, o `.md` e o `job.json`. Falha e cancelamento não gravam nada, e o temporário é
-//! apagado em qualquer desfecho.
+//! apagado em qualquer desfecho. "Guardar áudio" recodifica o envio num `.m4a`
+//! (`media::encode_audio`).
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use crate::asr::{Asr, Samples};
@@ -98,6 +100,16 @@ impl Pipeline for Engine {
             transcription.model,
             timings,
         )
+    }
+
+    fn save_audio(
+        &self,
+        job: &Job,
+        output: &Path,
+        progress: &mut dyn FnMut(u8),
+        cancel: &AtomicBool,
+    ) -> Result<(), Failure> {
+        Ok(media::encode_audio(&job.input, output, progress, cancel)?)
     }
 }
 

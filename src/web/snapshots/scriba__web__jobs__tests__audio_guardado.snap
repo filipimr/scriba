@@ -1,0 +1,129 @@
+---
+source: src/web/jobs.rs
+expression: html
+---
+<article id="job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" class="job-card max-md:p-md"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-file-video-camera"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M4 12V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2" />
+  <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+  <path d="m10 17.843 3.033-1.755a.64.64 0 0 1 .967.56v4.704a.65.65 0 0 1-.967.56L10 20.157" />
+  <rect width="7" height="6" x="3" y="16" rx="1" />
+</svg>
+  <div class="job-card-main">
+    <div class="job-card-head">
+      <h3 class="job-card-name" title="Reunião &#60;equipe&#62;.mp4">Reunião &#60;equipe&#62;.mp4</h3>
+      <span class="status-badge status-badge-success">Concluído</span>
+    </div>
+    <p class="job-card-meta">47 min · 312 MB · <span class="job-card-date">20/10/2026 14:30</span></p>
+    <div class="job-card-actions">
+      <a class="btn btn-primary" href="/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0" aria-label="Ver transcrição de Reunião &#60;equipe&#62;.mp4">Ver transcrição</a>
+      <a class="btn btn-secondary" href="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/transcricao.txt" download="Reunião equipe - transcrição.txt" aria-label="Baixar .txt de Reunião &#60;equipe&#62;.mp4"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-download"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 15V3" />
+  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+  <path d="m7 10 5 5 5-5" />
+</svg>Baixar .txt</a>
+      <a class="btn btn-secondary" href="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/transcricao.md" download="Reunião equipe - transcrição.md" aria-label="Baixar .md de Reunião &#60;equipe&#62;.mp4"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-download"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 15V3" />
+  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+  <path d="m7 10 5 5 5-5" />
+</svg>Baixar .md</a>
+      <button class="btn btn-utility" type="button" hx-post="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/open" hx-swap="none" aria-label="Abrir pasta de Reunião &#60;equipe&#62;.mp4"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-folder-open"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+</svg>Abrir pasta</button>
+    </div>
+    <div class="audio-prompt">
+      <p class="audio-prompt-text">Áudio guardado em <span class="audio-prompt-path">C:\Users\Ana\Música\2026-10-20 1430 - Reunião &#60;equipe&#62;.m4a</span></p>
+      <div class="audio-prompt-actions">
+        <button class="btn btn-utility" type="button" hx-post="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/audio/show" hx-swap="none" aria-label="Mostrar no Explorer o áudio de Reunião &#60;equipe&#62;.mp4"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-folder-search"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M10.7 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v4.1" />
+  <path d="m21 21-1.9-1.9" />
+  <circle cx="17" cy="17" r="3" />
+</svg>Mostrar no Explorer</button>
+      </div>
+    </div>
+  </div>
+  <button id="acao-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" class="btn-icon" type="button" aria-label="Remover Reunião &#60;equipe&#62;.mp4" title="Remover" hx-delete="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0?confirm=1" hx-confirm="A pasta “2026-10-20 1430 - Reunião equipe” vai para a Lixeira." hx-target="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" hx-swap="outerHTML" hx-sync="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0:replace"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-trash-2"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M10 11v6" />
+  <path d="M14 11v6" />
+  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+  <path d="M3 6h18" />
+  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+</svg></button>
+</article>

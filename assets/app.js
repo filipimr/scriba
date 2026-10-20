@@ -68,6 +68,9 @@ document.body.addEventListener("htmx:responseError", (e) => {
   toastError(e.detail.xhr.responseText || "Algo deu errado. Tente de novo.");
 });
 
+// Erro que chega pelo polling (HX-Trigger "scriba-erro"), como o "Guardar áudio" que falhou.
+document.body.addEventListener("scriba-erro", (e) => toastError(e.detail.value));
+
 // Remover um job concluído (hx-confirm) pede confirmação no <dialog> do design, não no
 // window.confirm. O showModal prende o foco, o Esc cancela e o foco volta ao botão.
 const dialog = document.getElementById("confirmar");

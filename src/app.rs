@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::Context;
 
 use crate::config::Paths;
+use crate::dialog::{SaveDialog, SystemDialog};
 use crate::engine::Engine;
 use crate::instance::Instance;
 use crate::jobs::{Jobs, Pipeline};
@@ -44,6 +45,7 @@ pub fn run(opts: Options) -> anyhow::Result<()> {
     let instance = Instance::new(listener.local_addr()?.port());
     instance.write(&file)?;
     let opener = opener(&opts);
+    let dialog = dialog(&opts);
     let state = AppState::new(
         instance.token.clone(),
         instance.id.clone(),
@@ -51,6 +53,7 @@ pub fn run(opts: Options) -> anyhow::Result<()> {
         opts.paths,
         jobs,
         opener,
+        dialog,
     );
     announce("Scriba em", &instance.url(), opts.open_browser);
 
@@ -63,6 +66,7 @@ pub fn run(opts: Options) -> anyhow::Result<()> {
         ctrl_c,
         SHUTDOWN_GRACE,
     ));
+    // Também descarta os envios que esperavam a resposta a "Guardar o áudio?".
     if !worker.shutdown(SHUTDOWN_GRACE) {
         eprintln!("o job em andamento não parou a tempo; encerrando mesmo assim");
     }
@@ -88,6 +92,17 @@ fn opener(opts: &Options) -> Arc<dyn Opener> {
     }
     let _ = opts;
     Arc::new(SystemOpener)
+}
+
+/// Com o pipeline falso, o "Salvar como" responde o que o E2E escreveu em
+/// `<data-dir>/salvar-como.txt`.
+fn dialog(opts: &Options) -> Arc<dyn SaveDialog> {
+    #[cfg(feature = "test-support")]
+    if opts.fake_pipeline {
+        return Arc::new(crate::dialog::ScriptedDialog::new(&opts.paths.data_dir));
+    }
+    let _ = opts;
+    Arc::new(SystemDialog)
 }
 
 fn announce(prefix: &str, url: &str, open_browser: bool) {

@@ -13,9 +13,9 @@ mod worker;
 pub use fake::FakePipeline;
 pub use id::{InvalidId, JobId};
 pub use model::{
-    Estimate, Event, FORMATS, Failure, Invalid, Job, Media, Outputs, PANIC_MESSAGE, Probe, Stage,
-    State,
+    Audio, AudioEvent, Estimate, Event, FORMATS, Failure, Invalid, Job, Media, Outputs,
+    PANIC_MESSAGE, Probe, Stage, State,
 };
 pub use pipeline::{Ctx, Pipeline};
-pub use store::{Jobs, RemoveError, RetryError};
+pub use store::{AudioError, DIALOG_ERROR, Jobs, RemoveError, RetryError, part_path};
 pub use worker::Worker;

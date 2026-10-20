@@ -71,7 +71,10 @@ pub async fn index(State(state): State<AppState>) -> Response {
 /// Avança o ciclo Sistema → Claro → Escuro, salva e devolve o botão novo. O evento
 /// `scriba-theme` (HX-Trigger) faz o `app.js` trocar o `data-theme` do `<html>`.
 pub async fn toggle_theme(State(state): State<AppState>) -> Response {
-    let theme = state.update_config(|c| c.theme = c.theme.next());
+    let theme = state.update_config(|c| {
+        c.theme = c.theme.next();
+        c.theme
+    });
     let event = format!(
         r#"{{"scriba-theme":{{"mode":"{}"}}}}"#,
         theme.attr().unwrap_or("system")

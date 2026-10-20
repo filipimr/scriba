@@ -25,7 +25,7 @@ use common::{Sampler, base_models, fixture, keyword_hits, working_set};
 use scriba::asr::{self, Asr, Backend, Models, Plan};
 use scriba::clock::LocalTime;
 use scriba::engine::Engine;
-use scriba::jobs::{Ctx, Failure, Job, JobId, Jobs, Media, Outputs, Pipeline, Stage, State};
+use scriba::jobs::{Audio, Ctx, Failure, Job, JobId, Jobs, Media, Outputs, Pipeline, Stage, State};
 use scriba::transcript::{self, MANIFEST_VERSION, Manifest, MediaKind};
 
 fn engine(out: &Path) -> Engine {
@@ -70,7 +70,7 @@ fn wait_done(jobs: &Jobs, id: JobId) -> Outputs {
     loop {
         let job = jobs.get(id).unwrap();
         match job.state {
-            State::Done { outputs } => return outputs,
+            State::Done { outputs, .. } => return outputs,
             ref s if s.is_terminal() => panic!("{} terminou em {s:?}", job.name),
             _ => {}
         }
@@ -118,6 +118,48 @@ impl Drop for Setup {
             assert!(worker.shutdown(Duration::from_secs(30)));
         }
     }
+}
+
+/// "Guardar áudio" com o `Engine`: o vídeo vira um `.m4a` só com o som, com a duração do
+/// áudio, e o envio sai de `uploads/`.
+#[test]
+fn guardar_audio_do_video_concluido() {
+    let setup = Setup::new();
+    let job = job(&setup.jobs, "fala.mp4");
+    let (id, input) = (job.id, job.input.clone());
+    setup.jobs.submit(job);
+    let outputs = wait_done(&setup.jobs, id);
+    assert!(input.exists(), "o envio espera a resposta");
+
+    let chosen = outputs.dir.join("fala.m4a");
+    let answer = chosen.clone();
+    setup
+        .jobs
+        .save_audio(id, move |_, _| Ok(Some(answer)))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        match setup.jobs.get(id).unwrap().state {
+            State::Done {
+                audio: Audio::Saved { path },
+                ..
+            } => {
+                assert_eq!(path, chosen);
+                break;
+            }
+            State::Done { audio, .. } if !audio.busy() => panic!("não guardou: {audio:?}"),
+            _ => {}
+        }
+        assert!(Instant::now() < deadline, "o áudio não terminou");
+        thread::sleep(Duration::from_millis(20));
+    }
+    let probe = scriba::media::probe(&chosen).unwrap();
+    assert!(probe.has_audio && !probe.has_video, "{probe:?}");
+    assert!(
+        (probe.duration_ms as i64 - 10_931).abs() <= 100,
+        "{probe:?}"
+    );
+    assert!(!input.exists(), "guardado apaga o envio");
 }
 
 #[test]
@@ -191,11 +233,13 @@ fn blocos_pelo_audio_temporario() {
         text.contains("orçamento") && text.contains("cronograma"),
         "{text}"
     );
-    // Nem o envio nem o áudio extraído (`<id>.f32`) ficam em `uploads`.
-    let left: Vec<_> = std::fs::read_dir(setup.jobs.uploads_dir())
+    // O áudio extraído (`<id>.f32`) não fica em `uploads`; o envio fica até a resposta a
+    // "Guardar o áudio?".
+    let left: Vec<String> = std::fs::read_dir(setup.jobs.uploads_dir())
         .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    assert!(left.is_empty(), "{left:?}");
+    assert!(left.len() == 1 && left[0].ends_with(".wav"), "{left:?}");
 }
 
 #[test]

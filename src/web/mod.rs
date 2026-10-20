@@ -1,6 +1,7 @@
 //! Servidor HTTP local (Axum em 127.0.0.1) que serve a UI.
 
 mod assets;
+mod audio;
 mod jobs;
 mod pages;
 mod reader;
@@ -16,7 +17,8 @@ use axum::extract::DefaultBodyLimit;
 use axum::middleware::from_fn_with_state;
 use axum::routing::{get, post};
 
-use crate::config::{Config, Paths, Theme};
+use crate::config::{Config, Paths};
+use crate::dialog::SaveDialog;
 use crate::jobs::Jobs;
 use crate::opener::Opener;
 
@@ -32,8 +34,10 @@ pub struct Inner {
     pub port: u16,
     pub paths: Paths,
     pub jobs: Jobs,
-    /// "Abrir pasta".
+    /// "Abrir pasta" e "Mostrar no Explorer".
     pub opener: Arc<dyn Opener>,
+    /// O "Salvar como" do "Guardar áudio".
+    pub dialog: Arc<dyn SaveDialog>,
     config: Mutex<Config>,
 }
 
@@ -52,6 +56,7 @@ impl AppState {
         paths: Paths,
         jobs: Jobs,
         opener: Arc<dyn Opener>,
+        dialog: Arc<dyn SaveDialog>,
     ) -> Self {
         let config = Config::load(&paths.config_file());
         Self(Arc::new(Inner {
@@ -61,6 +66,7 @@ impl AppState {
             paths,
             jobs,
             opener,
+            dialog,
             config: Mutex::new(config),
         }))
     }
@@ -72,14 +78,14 @@ impl AppState {
             .clone()
     }
 
-    /// Altera e persiste a configuração; devolve o tema resultante.
-    fn update_config(&self, f: impl FnOnce(&mut Config)) -> Theme {
+    /// Altera e persiste a configuração; devolve o que `f` devolver.
+    fn update_config<T>(&self, f: impl FnOnce(&mut Config) -> T) -> T {
         let mut config = self.config.lock().unwrap_or_else(PoisonError::into_inner);
-        f(&mut config);
+        let out = f(&mut config);
         if let Err(e) = config.save(&self.paths.config_file()) {
             eprintln!("não consegui salvar a configuração: {e}");
         }
-        config.theme
+        out
     }
 }
 
@@ -98,6 +104,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs/{id}/cancel", post(jobs::cancel))
         .route("/api/jobs/{id}/retry", post(jobs::retry))
         .route("/api/jobs/{id}/open", post(reader::open_folder))
+        .route("/api/jobs/{id}/audio/discard", post(audio::discard))
+        .route("/api/jobs/{id}/audio/save", post(audio::save))
+        .route("/api/jobs/{id}/audio/cancel", post(audio::cancel))
+        .route("/api/jobs/{id}/audio/show", post(audio::show))
         .route("/api/jobs/{id}/transcricao.txt", get(reader::download_txt))
         .route("/api/jobs/{id}/transcricao.md", get(reader::download_md))
         .route("/jobs/{id}", get(reader::page))

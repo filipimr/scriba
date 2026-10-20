@@ -14,7 +14,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | 3 | Fila de jobs e upload | Concluída |
 | 3.5 | Build nativo mais rápido | Concluída |
 | 4 | Transcrição de arquivos (MVP) | Concluída |
-| 5 | Guardar áudio | Em andamento |
+| 5 | Guardar áudio | Concluída |
 | 6 | Gravação ao vivo | Não iniciada |
 | 7 | Robustez, empacotamento e entrega final | Não iniciada |
 
@@ -101,8 +101,8 @@ O PRD original (codinome "MediaPipe Core") propõe um monólito em Rust: Axum + 
 | Web | `axum` 0.8 + `askama` + htmx 2 + Tailwind v4 compilado + fonte Inter (substituta do SF Pro indicada pelo design doc), tudo embutido | Nenhum arquivo solto. Funciona offline |
 | Estado | Fila em memória (`Arc<RwLock<HashMap>>` + `mpsc`), mais um manifesto `job.json` por saída | O histórico sobrevive a reinícios sem precisar de banco |
 | Saídas | `Documentos\Scriba\AAAA-MM-DD HHmm - nome\` (`transcricao.txt`, `transcricao.md`, `audio.m4a`/`video.mp4`). Temporários em `%LOCALAPPDATA%\Scriba` | Todos os caminhos são configuráveis, o que deixa os testes isolados |
-| Guardar áudio | No fim de cada transcrição, "Guardar o áudio?": AAC `.m4a` mono, gravado onde o usuário escolher no "Salvar como" do Windows; senão o temporário é apagado | Mídia descartável; sem compactação de vídeo. O x264 continua no FFmpeg só pelo `--self-test` (avaliar tirar) |
-| Testabilidade | Traits `Pipeline` (Fase 3), `Transcriber`, `MediaEngine`, `AudioSource` e `Clock`. Feature `test-support` com fakes e as flags `--fake-pipeline` e `--fake-audio`, fora do release | Toda a lógica roda no CI, sem placa de som nem GPU |
+| Guardar áudio | No fim de cada transcrição, "Guardar o áudio?": AAC `.m4a` mono (64 kbps, até 32 kHz) recodificado do original, gravado onde o usuário escolher no "Salvar como" do Windows; senão o temporário é apagado | Mídia descartável; sem compactação de vídeo. O x264 continua no FFmpeg só pelo `--self-test` (avaliar tirar) |
+| Testabilidade | Traits `Pipeline` (Fase 3), `Opener` e `SaveDialog` (o Explorer e o "Salvar como", Fases 4–5), `Transcriber`, `MediaEngine`, `AudioSource` e `Clock`. Feature `test-support` com fakes e as flags `--fake-pipeline` e `--fake-audio`, fora do release | Toda a lógica roda no CI, sem placa de som, GPU nem janela do Windows |
 
 ## Arquitetura
 
@@ -355,22 +355,26 @@ O plano da fase a divide em seis etapas, cada uma com o próprio PR: 4.1 whisper
 
 Objetivo: no fim de cada transcrição, o usuário decide se o áudio vira lixo ou se é guardado num `.m4a`, na pasta que ele escolher. A compactação de vídeo saiu do produto (decisão de 2026-10-19).
 
+O plano da fase a divide em duas etapas, cada uma com o próprio PR: 5.1 `media::encode_audio` (o motor, ainda fora do app) e 5.2 a pergunta no app (estado, "Salvar como", rotas, card, design e E2E).
+
 **Entregas:**
 
-- [ ] `media::encode_audio`: o áudio do original (ou o mix da gravação) → `.m4a` AAC mono, com progresso e cancelamento. Um vídeo vira só o som.
-- [ ] Card concluído com "Guardar o áudio?": "Descartar" (apaga o temporário) e "Guardar áudio".
-- [ ] "Guardar áudio" abre a janela "Salvar como" nativa do Windows pelo exe (lembra a última pasta) e grava o `.m4a` lá; cancelar a janela mantém a pergunta.
-- [ ] O temporário fica até a resposta ou a remoção do job e é apagado ao fechar o app e ao iniciar (sobras).
+- [x] `media::encode_audio` (etapa 5.1): o áudio do original → `.m4a` AAC-LC mono a 64 kbps, na taxa do original até 32 kHz, com progresso e cancelamento. Um vídeo vira só o som. O mix da gravação entra na Fase 6.
+- [x] Card concluído com "Guardar o áudio?": "Descartar" (apaga o temporário) e "Guardar áudio"; depois, "Áudio guardado em …" e "Mostrar no Explorer" (o arquivo selecionado na pasta).
+- [x] "Guardar áudio" abre a janela "Salvar como" nativa do Windows pelo exe, na frente do navegador (lembra a última pasta), e grava o `.m4a` lá, com progresso e cancelar no card; cancelar a janela mantém a pergunta, e um erro vira toast.
+- [x] O temporário fica até a resposta ou a remoção do job e é apagado ao fechar o app e ao iniciar (sobras).
 
 **Testes:**
 
-- [ ] Integração: os formatos das fixtures saem AAC mono com a duração do original (±0,1 s); cancelar interrompe.
-- [ ] Rotas: descartar apaga o temporário; guardar com um diálogo falso grava no caminho escolhido; diálogo cancelado não apaga nada.
-- [ ] E2E: transcrição → "Descartar" e "Guardar áudio" (diálogo falso com `--fake-pipeline`).
+- [x] Integração: os formatos das fixtures saem AAC mono com a duração do original (±0,1 s); cancelar interrompe. Também o `Engine` real guarda o `.m4a` de um vídeo concluído.
+- [x] Rotas: descartar apaga o temporário; guardar com um diálogo falso grava no caminho escolhido; diálogo cancelado não apaga nada.
+- [x] E2E: transcrição → "Descartar" e "Guardar áudio" (diálogo falso com `--fake-pipeline`), cancelar a gravação, erro em toast e a referência visual.
+- [x] Local: a janela real abre em primeiro plano e topmost, com outra janela na frente (`#[ignore = "desktop"]`).
 
 **Pronto quando:**
 
-- [ ] Uma gravação de 1 h do Teams vira texto e, se pedido, um `.m4a` na pasta escolhida que abre no Media Player e no celular.
+- [x] Uma gravação de 1 h do Teams vira texto e, se pedido, um `.m4a` na pasta escolhida que abre no Media Player. Medido com o MP4 de 1 h da audiência da Câmara (H.264 720p + AAC, como uma gravação do Teams), pelo exe de release.
+- [ ] O mesmo `.m4a` toca no celular (conferência do mantenedor).
 
 ### Fase 6 — Gravação ao vivo
 
@@ -580,6 +584,18 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-20 | Fase 4 | Piso de cobertura de 85% para 90% | A `main` estava com 93,2% das linhas cobertas no CI (`lcov.info` do último run) |
 | 2026-10-20 | Fase 4 | Localmente, a suíte inteira roda com `cargo nextest run` (como o CI): com `cargo test`, os testes de whisper de um mesmo binário rodam em paralelo e as threads em espera ativa do ggml chegaram a travar o `asr` por mais de 30 min | Achado (3) do spike A, agravado pelos testes de blocos |
 | 2026-10-20 | Fase 4 | E2E "a alternância de tema persiste após recarregar": cada clique espera o `htmx:afterSettle`, porque o segundo clique chegava antes de o htmx processar o botão trocado | Intermitência vista na 4.5 |
+| 2026-10-20 | Fase 5 | A fase é dividida em duas etapas, cada uma com o próprio PR: 5.1 `media::encode_audio` e 5.2 a pergunta no app | O encoder é revisado e medido antes da UI; a 5.2 vai inteira porque guardar o envio sem a pergunta deixaria temporários sem saída |
+| 2026-10-20 | Fase 5 | `.m4a` AAC-LC mono a 64 kbps, na taxa do original quando o AAC a aceita, com teto de 32 kHz e sem reamostrar para cima (`media::audio_rate`); encoder `aac` nativo do FFmpeg e muxer `ipod` com `+faststart` (o índice no começo, para o celular). A fonte é o original enviado, e não o `.f32` da extração (16 kHz, apagado depois da transcrição). O `vcpkg.json` não mudou: o `ff_aac_encoder` e o `ff_ipod_muxer` já estavam no FFmpeg estático | Decisão do mantenedor entre 48, 64 e 96 kbps: 32 kHz dá ~15 kHz de banda, transparente para fala e aceitável para música de fundo |
+| 2026-10-20 | Fase 5 | A extração e a codificação dividem o `Source` (abrir a melhor faixa e decodificar numa taxa dada); a `extract_audio_into` não mudou por fora. Nas oito fixtures, o `.m4a` sai com 10,931 s, a duração exata do áudio do original (a edit list do MP4 tira o atraso do AAC) | `tests/media.rs` |
+| 2026-10-20 | Fase 5 | Medições do encoder, build de release, na tomada: 1 h de MP4 (H.264 720p + AAC) em 14,2 s (254× tempo real) → 30,1 MB; 1 h de MP3 em 15,1 s (238×) → 30,3 MB; os dois a 32 kHz | `guardar_audio_longo` em `tests/media.rs` |
+| 2026-10-20 | Fase 5 | Disco: o envio fica em `uploads/` até a resposta, sem descarte automático; sai ao Descartar, ao Guardar com sucesso, ao Remover, ao fechar o app (o `Worker::shutdown` esvazia a pasta) e ao iniciar. O card já mostra o tamanho do original | Decisão do mantenedor; mantém o ROADMAP e o mixdown só sob pedido da Fase 6 |
+| 2026-10-20 | Fase 5 | Estado: `State::Done { outputs, audio }`, com a máquina `Audio` pura (pendente → escolhendo → guardando → guardado, ou descartado; cancelar ou erro volta à pendente, com o erro uma vez) e proptest. Cada "Guardar áudio" roda numa thread própria (`scriba-audio-<id>`), fora do worker, para não esperar uma transcrição: abre a janela, grava em `<arquivo>.parte` pelo `Pipeline::save_audio` e renomeia no fim, substituindo o arquivo que a janela já mandou sobrescrever. O POST responde na hora com o card em "Escolhendo onde guardar…", e o card acompanha pelo polling (`?audio=1`); nenhuma requisição fica presa com a janela aberta | O encerramento continua com os 5 s de folga; o `Worker::shutdown` cancela as gravações e espera só as que estão codificando |
+| 2026-10-20 | Fase 5 | Rotas `POST /api/jobs/{id}/audio/{discard,save,cancel,show}`; 409 para job não concluído, áudio já respondido ou ocupado, e Remover com o áudio ocupado. O erro chega ao fim do polling como `HX-Trigger` `scriba-erro`, com o JSON escapado em ASCII (`\uXXXX`), porque o XHR lê o cabeçalho como Latin-1; o `app.js` o mostra num toast. A lista não repete o toast | Erro de ação sempre em toast, como na 4.5 |
+| 2026-10-20 | Fase 5 | "Salvar como": `IFileSaveDialog` pelo crate `windows` 0.62.2 (o mesmo que o `cpal` já trazia ao `Cargo.lock`; features `Win32_Foundation`, `Win32_Graphics_Gdi`, `Win32_System_Com`, `Win32_System_Threading`, `Win32_UI_Shell`, `Win32_UI_Shell_Common` e `Win32_UI_WindowsAndMessaging`), numa thread STA própria, dona de uma janela oculta topmost no monitor do navegador, com `AttachThreadInput` + `SetForegroundWindow`. A janela abriu em primeiro plano e topmost no teste local e no app. Nome sugerido = a pasta da transcrição (`AAAA-MM-DD HHmm - nome.m4a`); pasta inicial = a última escolhida (`audio_dir` no `config.json`), salvo se ela foi a pasta de outra transcrição ou sumiu, quando vale a desta | Decisão do mantenedor para a pasta inicial; o `SetFolder` (e não o `SetDefaultFolder`) vale mais que a pasta que o Windows lembra |
+| 2026-10-20 | Fase 5 | Achado no teste com o exe: o `SHCreateItemFromParsingName` recusa caminho com `/`, e a janela caía em Documentos. O caminho passa pelo `std::path::absolute` (que troca por `\`) e a recusa vai para o stderr | `--output-dir` com barras do Git Bash |
+| 2026-10-20 | Fase 5 | "Mostrar no Explorer": `Opener::reveal` com `SHOpenFolderAndSelectItems` (a pasta aberta com o `.m4a` selecionado, conferido no app); o `PrintOpener` imprime `mostrar arquivo: …`. O E2E controla o "Salvar como" pelo `ScriptedDialog` (`<data-dir>/salvar-como.txt`) | Mesmo padrão do `PrintOpener` da 4.5 |
+| 2026-10-20 | Fase 5 | Design: componente `audio-prompt` (parchment dentro do card branco, `{typography.callout}`, `{rounded.md}`, 12 × 16 px), com "Guardar áudio" e "Descartar" em `button-secondary` de mesmo peso e "Mostrar no Explorer" em `button-utility` (ícone Lucide folder-search). Enquanto grava, o botão de ação do card vira "Cancelar o áudio de …"; com a janela aberta, ele fica inativo | Nenhuma resposta é a errada; a troca de superfície separa a pergunta sem borda nem cor |
+| 2026-10-20 | Fase 5 | "Pronto quando" com o exe de release (Vulkan) e o MP4 de 1 h (472 MB): transcrição em 119 s na RTX (estimativa do card: "Cerca de 3 min"); "Guardar áudio" pela janela real em 25 s do clique ao fim; `.m4a` de 30,1 MB, AAC-LC mono a 32 kHz, 3.600,02 s, que o shell do Windows (o Media Foundation, o mesmo do Media Player) lê como "Arquivo M4A" de 01:00:00. A conferência no celular fica com o mantenedor | Critério da fase |
 
 ## Referências verificadas
 
