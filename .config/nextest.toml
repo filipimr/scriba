@@ -4,7 +4,7 @@
 whisper = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = "binary(spike_a_whisper) | binary(self_test)"
+filter = "binary(spike_a_whisper) | binary(self_test) | binary(asr) | binary(bench_asr)"
 test-group = "whisper"
 
 [profile.ci]

@@ -2,6 +2,7 @@
 //! simulado e o `--self-test` da release.
 
 pub mod app;
+pub mod asr;
 pub mod clock;
 pub mod config;
 pub mod instance;
