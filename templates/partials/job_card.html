@@ -1,5 +1,5 @@
 <article id="job-{{ job.id }}" class="job-card max-md:p-md"
-  {%- if job.active %} hx-get="/api/jobs/{{ job.id }}" hx-trigger="every 1s" hx-swap="outerHTML"{% endif %}>
+  {%- if job.polling %} hx-get="/api/jobs/{{ job.id }}{% if job.done.is_some() %}?audio=1{% endif %}" hx-trigger="every 1s" hx-swap="outerHTML"{% endif %}>
   {%- if job.video %}{% include "icons/file-video-camera.svg" %}{% else %}{% include "icons/file-headphone.svg" %}{% endif %}
   <div class="job-card-main">
     <div class="job-card-head">
@@ -27,6 +27,32 @@
       <button class="btn btn-utility" type="button" hx-post="/api/jobs/{{ job.id }}/open" hx-swap="none" aria-label="Abrir pasta de {{ job.name }}">
         {%- include "icons/folder-open.svg" %}Abrir pasta</button>
     </div>
+    {%- if done.audio.visible() %}
+    <div class="audio-prompt">
+      {%- if done.audio.ask %}
+      <p class="audio-prompt-text">Guardar o áudio?</p>
+      <div class="audio-prompt-actions">
+        <button class="btn btn-secondary" type="button" aria-label="Guardar áudio de {{ job.name }}"
+          hx-post="/api/jobs/{{ job.id }}/audio/save" hx-target="#job-{{ job.id }}" hx-swap="outerHTML" hx-sync="#job-{{ job.id }}:replace">Guardar áudio</button>
+        <button class="btn btn-secondary" type="button" aria-label="Descartar áudio de {{ job.name }}"
+          hx-post="/api/jobs/{{ job.id }}/audio/discard" hx-target="#job-{{ job.id }}" hx-swap="outerHTML" hx-sync="#job-{{ job.id }}:replace">Descartar</button>
+      </div>
+      {%- endif %}
+      {%- if let Some(stage) = done.audio.stage %}
+      <p class="audio-prompt-text">{{ stage }}</p>
+      {%- endif %}
+      {%- if let Some(pct) = done.audio.pct %}
+      <progress class="progress-bar" max="100" value="{{ pct }}" aria-label="Áudio de {{ job.name }}"></progress>
+      {%- endif %}
+      {%- if let Some(saved) = done.audio.saved %}
+      <p class="audio-prompt-text">Áudio guardado em <span class="audio-prompt-path">{{ saved }}</span></p>
+      <div class="audio-prompt-actions">
+        <button class="btn btn-utility" type="button" hx-post="/api/jobs/{{ job.id }}/audio/show" hx-swap="none" aria-label="Mostrar no Explorer o áudio de {{ job.name }}">
+          {%- include "icons/folder-search.svg" %}Mostrar no Explorer</button>
+      </div>
+      {%- endif %}
+    </div>
+    {%- endif %}
     {%- endif %}
     {%- if job.retry %}
     <div class="job-card-actions">
@@ -36,17 +62,28 @@
     {%- endif %}
   </div>
   {#- O botão de ação mantém o id entre Cancelar e Remover: o htmx devolve o foco a ele. #}
-  {%- if job.active %}
+  {%- match job.action %}
+  {%- when crate::web::jobs::Action::CancelJob %}
   <button id="acao-{{ job.id }}" class="btn-icon" type="button" aria-label="Cancelar {{ job.name }}" title="Cancelar"
     {%- if job.canceling %} aria-disabled="true"
     {%- else %} hx-post="/api/jobs/{{ job.id }}/cancel" hx-target="#job-{{ job.id }}" hx-swap="outerHTML" hx-sync="#job-{{ job.id }}:replace"{% endif %}>
     {%- include "icons/x.svg" -%}
   </button>
-  {%- else %}
+  {%- when crate::web::jobs::Action::CancelAudio %}
+  <button id="acao-{{ job.id }}" class="btn-icon" type="button" aria-label="Cancelar o áudio de {{ job.name }}" title="Cancelar"
+    {%- if job.canceling %} aria-disabled="true"
+    {%- else %} hx-post="/api/jobs/{{ job.id }}/audio/cancel" hx-target="#job-{{ job.id }}" hx-swap="outerHTML" hx-sync="#job-{{ job.id }}:replace"{% endif %}>
+    {%- include "icons/x.svg" -%}
+  </button>
+  {%- when crate::web::jobs::Action::Wait %}
+  <button id="acao-{{ job.id }}" class="btn-icon" type="button" aria-label="Remover {{ job.name }}" title="Remover" aria-disabled="true">
+    {%- include "icons/trash-2.svg" -%}
+  </button>
+  {%- when crate::web::jobs::Action::Remove %}
   <button id="acao-{{ job.id }}" class="btn-icon" type="button" aria-label="Remover {{ job.name }}" title="Remover"
     {%- if let Some(done) = job.done %} hx-delete="/api/jobs/{{ job.id }}?confirm=1" hx-confirm="A pasta “{{ done.folder }}” vai para a Lixeira."
     {%- else %} hx-delete="/api/jobs/{{ job.id }}"{% endif %} hx-target="#job-{{ job.id }}" hx-swap="outerHTML" hx-sync="#job-{{ job.id }}:replace">
     {%- include "icons/trash-2.svg" -%}
   </button>
-  {%- endif %}
+  {%- endmatch %}
 </article>

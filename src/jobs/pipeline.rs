@@ -18,6 +18,17 @@ pub trait Pipeline: Send + Sync {
     /// Roda na thread do worker. Deve chamar `ctx.check()?` com frequência para atender ao
     /// cancelamento.
     fn run(&self, job: &Job, ctx: &Ctx) -> Result<Outputs, Failure>;
+
+    /// "Guardar áudio": grava o áudio do envio do job concluído em `output` (um `.m4a`).
+    /// Roda numa thread própria, fora do worker. `progress` vai de 0 a 100; com `cancel`,
+    /// devolve `Failure::Canceled`. Em erro, não deixa `output` para trás.
+    fn save_audio(
+        &self,
+        job: &Job,
+        output: &Path,
+        progress: &mut dyn FnMut(u8),
+        cancel: &AtomicBool,
+    ) -> Result<(), Failure>;
 }
 
 pub struct Ctx {

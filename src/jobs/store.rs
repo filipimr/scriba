@@ -2,16 +2,21 @@
 //! persistido: um reinício começa com a lista vazia.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs;
 use std::io;
+use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::thread::{self, JoinHandle};
 
 use tokio::sync::mpsc;
 
 use super::id::JobId;
-use super::model::{Event, Failure, Job, Probe, Stage, State};
+use super::model::{
+    Audio, AudioEvent, Event, Failure, Job, Outputs, PANIC_MESSAGE, Probe, Stage, State,
+};
 use super::pipeline::Pipeline;
 use super::worker::Worker;
 
@@ -37,13 +42,32 @@ struct Entry {
     job: Job,
     /// Lido pelo pipeline sem pegar o lock.
     cancel: Arc<AtomicBool>,
+    /// A gravação do áudio ("Guardar áudio"), numa thread própria, e a flag que a cancela.
+    audio: Option<(JoinHandle<()>, Arc<AtomicBool>)>,
 }
+
+/// Por que a pergunta "Guardar o áudio?" não aceitou a resposta.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AudioError {
+    NotFound,
+    /// O job ainda não concluiu (ou falhou, ou foi cancelado).
+    NotDone,
+    /// A janela "Salvar como" está aberta ou o áudio está sendo gravado.
+    Busy,
+    /// O áudio já foi guardado ou descartado.
+    Answered,
+}
+
+/// Mensagem da janela "Salvar como" que não abriu.
+pub const DIALOG_ERROR: &str = "Não consegui abrir a janela Salvar como. Tente de novo.";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RemoveError {
     NotFound,
     /// Job na fila ou rodando: precisa ser cancelado antes.
     Active,
+    /// O áudio está sendo guardado (ou a janela "Salvar como" está aberta).
+    AudioBusy,
     /// O job tem uma transcrição: removê-lo manda a pasta para a Lixeira, e isso precisa
     /// ser confirmado.
     NeedsConfirm,
@@ -114,6 +138,7 @@ impl Jobs {
         let entry = Entry {
             job,
             cancel: Arc::default(),
+            audio: None,
         };
         self.write().insert(id, entry);
         // Sem worker (testes) ou encerrando: o job fica na fila.
@@ -171,9 +196,10 @@ impl Jobs {
         let job = self.get(id).ok_or(RemoveError::NotFound)?;
         match &job.state {
             state if !state.is_terminal() => return Err(RemoveError::Active),
+            State::Done { audio, .. } if audio.busy() => return Err(RemoveError::AudioBusy),
             State::Done { .. } if !confirmed => return Err(RemoveError::NeedsConfirm),
             // Apagada fora do app: não há o que mandar para a Lixeira.
-            State::Done { outputs } if outputs.dir.exists() => {
+            State::Done { outputs, .. } if outputs.dir.exists() => {
                 crate::trash::move_to_trash(&outputs.dir).map_err(|e| {
                     eprintln!(
                         "não consegui mandar {} para a Lixeira: {e}",
@@ -212,8 +238,9 @@ impl Jobs {
         }
     }
 
-    /// O fim do pipeline. O envio é apagado antes de publicar o fim (quem vê o job terminado
-    /// já não acha o arquivo), exceto se o job falhou: ele fica para o "Tentar de novo".
+    /// O fim do pipeline. Um job cancelado tem o envio apagado antes de publicar o fim (quem
+    /// vê o job terminado já não acha o arquivo); o concluído o guarda até a resposta a
+    /// "Guardar o áudio?", e o que falhou, para o "Tentar de novo".
     pub(super) fn finish(&self, id: JobId, event: Event) {
         let mut entries = self.write();
         let Some(entry) = entries.get_mut(&id) else {
@@ -222,25 +249,203 @@ impl Jobs {
         let Ok(state) = entry.job.state.apply(event) else {
             return;
         };
-        if !matches!(state, State::Failed { .. }) {
+        if state == State::Canceled {
             remove_quietly(&entry.job.input);
         }
         entry.job.state = state;
     }
 
-    /// Encerramento: cancela o job em andamento e impede que outros comecem.
+    /// "Descartar": o envio do job concluído é apagado na hora.
+    pub fn discard_audio(&self, id: JobId) -> Result<Job, AudioError> {
+        let job = self.answer(id, AudioEvent::Discard)?;
+        remove_quietly(&job.input);
+        Ok(job)
+    }
+
+    /// "Guardar áudio": numa thread própria, `ask` abre a janela "Salvar como" (devolve o
+    /// arquivo escolhido, ou `None` se o usuário cancelou) e o pipeline grava o `.m4a` em
+    /// `<arquivo>.parte`, renomeado no fim. Com sucesso, o envio é apagado; cancelada ou com
+    /// erro, a pergunta volta e o envio fica. Devolve o job já com a janela aberta.
+    pub fn save_audio(
+        &self,
+        id: JobId,
+        ask: impl FnOnce(&Job, &Outputs) -> io::Result<Option<PathBuf>> + Send + 'static,
+    ) -> Result<Job, AudioError> {
+        let job = self.answer(id, AudioEvent::Choose)?;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let thread = {
+            let (jobs, job, cancel) = (self.clone(), job.clone(), cancel.clone());
+            thread::Builder::new()
+                .name(format!("scriba-audio-{id}"))
+                .spawn(move || jobs.run_save(&job, ask, &cancel))
+                .expect("criando a thread do áudio")
+        };
+        if let Some(entry) = self.write().get_mut(&id) {
+            entry.audio = Some((thread, cancel));
+        }
+        Ok(job)
+    }
+
+    /// Pede o cancelamento da gravação do áudio; fora dela, não muda nada.
+    pub fn cancel_audio(&self, id: JobId) -> Option<Job> {
+        let mut entries = self.write();
+        let entry = entries.get_mut(&id)?;
+        if let State::Done {
+            audio: Audio::Saving { .. },
+            ..
+        } = entry.job.state
+            && let Some((_, cancel)) = &entry.audio
+        {
+            cancel.store(true, Ordering::Relaxed);
+            if let Ok(state) = entry.job.state.apply(Event::Audio(AudioEvent::Cancel)) {
+                entry.job.state = state;
+            }
+        }
+        Some(entry.job.clone())
+    }
+
+    /// Aplica a resposta do usuário e devolve o job; um erro diz por que ela não vale.
+    fn answer(&self, id: JobId, event: AudioEvent) -> Result<Job, AudioError> {
+        let mut entries = self.write();
+        let entry = entries.get_mut(&id).ok_or(AudioError::NotFound)?;
+        let State::Done { audio, .. } = &entry.job.state else {
+            return Err(AudioError::NotDone);
+        };
+        let error = if audio.busy() {
+            AudioError::Busy
+        } else {
+            AudioError::Answered
+        };
+        entry.job.state = entry
+            .job
+            .state
+            .apply(Event::Audio(event))
+            .map_err(|_| error)?;
+        Ok(entry.job.clone())
+    }
+
+    /// A thread do "Guardar áudio". Um panic (bug) vira a mensagem genérica de erro.
+    fn run_save(
+        &self,
+        job: &Job,
+        ask: impl FnOnce(&Job, &Outputs) -> io::Result<Option<PathBuf>>,
+        cancel: &AtomicBool,
+    ) {
+        let State::Done { outputs, .. } = &job.state else {
+            return;
+        };
+        let id = job.id;
+        let chosen = match panic::catch_unwind(AssertUnwindSafe(|| ask(job, outputs))) {
+            Ok(Ok(chosen)) => chosen,
+            outcome => {
+                if let Ok(Err(e)) = outcome {
+                    eprintln!("a janela Salvar como não abriu: {e}");
+                }
+                let error = Failure::Error(DIALOG_ERROR.into());
+                self.audio(id, AudioEvent::Finished(Err(error)));
+                return;
+            }
+        };
+        // Escolhido depois do Ctrl+C: o envio já vai ser apagado.
+        let Some(path) = chosen.filter(|_| !self.stopping()) else {
+            self.audio(id, AudioEvent::Chosen(None));
+            return;
+        };
+        self.audio(id, AudioEvent::Chosen(Some(path.clone())));
+        let part = part_path(&path);
+        let mut progress = |pct| self.audio(id, AudioEvent::Progress(pct));
+        let saved = panic::catch_unwind(AssertUnwindSafe(|| {
+            self.0
+                .pipeline
+                .save_audio(job, &part, &mut progress, cancel)
+        }))
+        .unwrap_or_else(|_| Err(Failure::Error(PANIC_MESSAGE.into())))
+        .and_then(|()| {
+            // O "Salvar como" já perguntou se pode substituir um arquivo que existe.
+            fs::rename(&part, &path).map_err(|e| {
+                eprintln!("não consegui renomear {}: {e}", part.display());
+                crate::media::Error::Encode.into()
+            })
+        });
+        if saved.is_err() {
+            remove_quietly(&part);
+        }
+        // Com o áudio guardado, o envio é apagado antes de publicar o fim.
+        let mut entries = self.write();
+        let Some(entry) = entries.get_mut(&id) else {
+            return;
+        };
+        let event = Event::Audio(AudioEvent::Finished(saved.map(|()| path)));
+        if let Ok(state) = entry.job.state.apply(event) {
+            if let State::Done {
+                audio: Audio::Saved { .. },
+                ..
+            } = state
+            {
+                remove_quietly(&entry.job.input);
+            }
+            entry.job.state = state;
+        }
+    }
+
+    /// Aplica um evento da gravação do áudio; transições inválidas são ignoradas.
+    fn audio(&self, id: JobId, event: AudioEvent) {
+        self.apply(id, Event::Audio(event));
+    }
+
+    /// Encerramento: cancela o job em andamento e as gravações de áudio, e impede que outros
+    /// comecem.
     pub(super) fn stop(&self) {
         self.0.stopping.store(true, Ordering::Relaxed);
         for entry in self.write().values_mut() {
-            if matches!(entry.job.state, State::Running { .. }) {
-                entry.cancel.store(true, Ordering::Relaxed);
-                if let Ok(state) = entry.job.state.apply(Event::Cancel) {
-                    entry.job.state = state;
+            let event = match &entry.job.state {
+                State::Running { .. } => {
+                    entry.cancel.store(true, Ordering::Relaxed);
+                    Event::Cancel
                 }
+                State::Done {
+                    audio: Audio::Saving { .. },
+                    ..
+                } => {
+                    if let Some((_, cancel)) = &entry.audio {
+                        cancel.store(true, Ordering::Relaxed);
+                    }
+                    Event::Audio(AudioEvent::Cancel)
+                }
+                _ => continue,
+            };
+            if let Ok(state) = entry.job.state.apply(event) {
+                entry.job.state = state;
             }
         }
         // Acorda o worker se ele estiver esperando a fila.
         let _ = self.0.queue.send(Msg::Stop);
+    }
+
+    /// As threads que gravam áudio agora, para o encerramento esperar. As que estão com a
+    /// janela aberta ficam de fora: a janela só fecha com o usuário, e o processo sai mesmo
+    /// assim.
+    pub(super) fn saving_threads(&self) -> Vec<JoinHandle<()>> {
+        self.write()
+            .values_mut()
+            .filter(|e| {
+                matches!(
+                    e.job.state,
+                    State::Done {
+                        audio: Audio::Saving { .. },
+                        ..
+                    }
+                )
+            })
+            .filter_map(|e| e.audio.take().map(|(thread, _)| thread))
+            .collect()
+    }
+
+    /// Encerramento: os envios que esperavam a resposta são descartados.
+    pub(super) fn clear_uploads(&self) {
+        if let Err(e) = clear_uploads(&self.0.uploads) {
+            eprintln!("não consegui esvaziar {}: {e}", self.0.uploads.display());
+        }
     }
 
     pub(super) fn stopping(&self) -> bool {
@@ -275,4 +480,25 @@ fn clear_uploads(dir: &Path) -> io::Result<()> {
 
 fn remove_quietly(path: &Path) {
     let _ = fs::remove_file(path);
+}
+
+/// Onde o `.m4a` é gravado antes de ganhar o nome escolhido: `<arquivo>.parte`, na mesma
+/// pasta (o renome no fim não copia nada). Um cancelamento ou erro o apaga.
+pub fn part_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().map_or_else(OsString::new, OsString::from);
+    name.push(".parte");
+    path.with_file_name(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parte_fica_ao_lado_do_escolhido() {
+        assert_eq!(
+            part_path(Path::new(r"C:\Áudios\Reunião.m4a")),
+            PathBuf::from(r"C:\Áudios\Reunião.m4a.parte")
+        );
+    }
 }

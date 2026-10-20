@@ -245,6 +245,7 @@ async fn encerramento_nao_espera_envio_parado() {
         paths,
         jobs,
         std::sync::Arc::new(scriba::opener::SystemOpener),
+        std::sync::Arc::new(scriba::dialog::SystemDialog),
     );
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(serve(

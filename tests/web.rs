@@ -11,7 +11,8 @@ use std::time::{Duration, Instant};
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use scriba::asr::{Asr, Models};
-use scriba::config::Paths;
+use scriba::config::{Config, Paths};
+use scriba::dialog::{SaveDialog, SaveRequest};
 use scriba::engine::Engine;
 use scriba::jobs::{Ctx, Estimate, Failure, Job, Jobs, Media, Outputs, Pipeline, Probe};
 use scriba::opener::Opener;
@@ -84,6 +85,43 @@ impl Pipeline for WebPipeline {
         std::fs::write(&outputs.md, transcript::render_md(&t)).unwrap();
         Ok(outputs)
     }
+
+    /// Grava "áudio de <nome>"; `audio-ruim` falha e `audio-sem-fim` grava até ser
+    /// cancelado.
+    fn save_audio(
+        &self,
+        job: &Job,
+        output: &Path,
+        progress: &mut dyn FnMut(u8),
+        cancel: &AtomicBool,
+    ) -> Result<(), Failure> {
+        if job.name.contains("audio-ruim") {
+            return Err(Failure::Error("Não consegui guardar o áudio.".into()));
+        }
+        progress(10);
+        while job.name.contains("audio-sem-fim") {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(Failure::Canceled);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::fs::write(output, format!("áudio de {}", job.name)).unwrap();
+        Ok(())
+    }
+}
+
+/// O "Salvar como" de teste: responde `answer` e registra os pedidos.
+#[derive(Default)]
+struct Answers {
+    answer: Mutex<Option<PathBuf>>,
+    asked: Mutex<Vec<SaveRequest>>,
+}
+
+impl SaveDialog for Answers {
+    fn ask(&self, request: &SaveRequest) -> std::io::Result<Option<PathBuf>> {
+        self.asked.lock().unwrap().push(request.clone());
+        Ok(self.answer.lock().unwrap().clone())
+    }
 }
 
 /// Os dois parágrafos que o `WebPipeline` grava.
@@ -92,10 +130,12 @@ const SPEECH: [(u64, u64, &str); 2] = [
     (9_000, 12_000, "Segundo parágrafo."),
 ];
 
-/// "Abrir pasta" que só registra as pastas; com `fail`, devolve erro.
+/// "Abrir pasta" e "Mostrar no Explorer" que só registram os caminhos; com `fail`, devolvem
+/// erro.
 #[derive(Default)]
 struct Recording {
     opened: Mutex<Vec<PathBuf>>,
+    revealed: Mutex<Vec<PathBuf>>,
     fail: AtomicBool,
 }
 
@@ -105,6 +145,14 @@ impl Opener for Recording {
             return Err(std::io::Error::other("sem Explorer"));
         }
         self.opened.lock().unwrap().push(dir.to_path_buf());
+        Ok(())
+    }
+
+    fn reveal(&self, file: &Path) -> std::io::Result<()> {
+        if self.fail.load(Ordering::Relaxed) {
+            return Err(std::io::Error::other("sem Explorer"));
+        }
+        self.revealed.lock().unwrap().push(file.to_path_buf());
         Ok(())
     }
 }
@@ -127,7 +175,35 @@ fn state(dir: &tempfile::TempDir) -> AppState {
 }
 
 fn app_state(paths: Paths, jobs: Jobs, opener: Arc<Recording>) -> AppState {
-    AppState::new(TOKEN.into(), "inst-1".into(), PORT, paths, jobs, opener)
+    dialog_state(paths, jobs, opener, Arc::default())
+}
+
+fn dialog_state(
+    paths: Paths,
+    jobs: Jobs,
+    opener: Arc<Recording>,
+    dialog: Arc<Answers>,
+) -> AppState {
+    AppState::new(
+        TOKEN.into(),
+        "inst-1".into(),
+        PORT,
+        paths,
+        jobs,
+        opener,
+        dialog,
+    )
+}
+
+/// Com o worker, o opener que registra e o "Salvar como" de teste.
+fn audio_state(
+    dir: &tempfile::TempDir,
+) -> (AppState, scriba::jobs::Worker, Arc<Recording>, Arc<Answers>) {
+    let paths = paths(dir);
+    let (jobs, worker) = Jobs::start(paths.uploads_dir(), pipeline(&paths)).unwrap();
+    let (opener, dialog) = (Arc::new(Recording::default()), Arc::new(Answers::default()));
+    let state = dialog_state(paths, jobs, opener.clone(), dialog.clone());
+    (state, worker, opener, dialog)
 }
 
 /// Com o worker: os jobs terminam. O worker vive até o fim do teste.
@@ -922,4 +998,237 @@ async fn abrir_pasta_chama_o_opener_com_a_pasta_do_job() {
         let (status, _, _) = send(&s, with_origin(Request::post(uri))).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
     }
+}
+// "Guardar o áudio?" -------------------------------------------------------------------
+
+/// Faz o polling do áudio (`?audio=1`) até o 286 e devolve os cabeçalhos e o card.
+async fn final_audio_card(s: &AppState, id: &str) -> (axum::http::HeaderMap, String) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let uri = format!("/api/jobs/{id}?audio=1");
+        let (status, headers, card) = get_page(s, &uri).await;
+        if status.as_u16() == 286 {
+            return (headers, card);
+        }
+        assert_eq!(status, StatusCode::OK, "{card}");
+        assert!(Instant::now() < deadline, "o áudio não terminou: {card}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn post(s: &AppState, uri: &str) -> (StatusCode, axum::http::HeaderMap, String) {
+    send(s, with_origin(Request::post(uri))).await
+}
+
+#[tokio::test]
+async fn card_concluido_pergunta_e_descartar_apaga_o_temporario() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, _worker) = running_state(&dir);
+    let (id, _) = done_job(&s, &dir, "reuniao.mp4").await;
+    let card = final_card(&s, &id).await;
+    for part in [
+        "Guardar o áudio?".to_string(),
+        format!(r#"hx-post="/api/jobs/{id}/audio/save""#),
+        format!(r#"hx-post="/api/jobs/{id}/audio/discard""#),
+    ] {
+        assert!(card.contains(&part), "{part}\n{card}");
+    }
+    assert_eq!(uploads(&dir).len(), 1, "o temporário espera a resposta");
+
+    let discard = format!("/api/jobs/{id}/audio/discard");
+    let (status, _, card) = post(&s, &discard).await;
+    assert_eq!(status, StatusCode::OK, "{card}");
+    assert!(!card.contains("Guardar o áudio?"), "{card}");
+    assert!(card.contains("Áudio de reuniao.mp4 descartado."), "{card}");
+    assert!(uploads(&dir).is_empty());
+
+    let (status, _, body) = post(&s, &discard).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body, "O áudio deste job já foi guardado ou descartado.");
+    let (status, _, _) = post(&s, &format!("/api/jobs/{id}/audio/save")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    for uri in [
+        "/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/audio/discard",
+        "/api/jobs/x/audio/save",
+        "/api/jobs/x/audio/cancel",
+        "/api/jobs/x/audio/show",
+    ] {
+        assert_eq!(post(&s, uri).await.0, StatusCode::NOT_FOUND, "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn job_que_nao_concluiu_nao_responde_a_pergunta() {
+    let dir = tempfile::tempdir().unwrap();
+    // Sem worker: o job fica na fila.
+    let s = state(&dir);
+    let (_, _, body) = send(&s, post_jobs(&[("arquivo", Some("a.mp4"), b"x")])).await;
+    let id = card_ids(&body).remove(0);
+    for action in ["discard", "save"] {
+        let (status, _, body) = post(&s, &format!("/api/jobs/{id}/audio/{action}")).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{action}");
+        assert_eq!(body, "Espere a transcrição terminar.");
+    }
+    let (status, _, card) = post(&s, &format!("/api/jobs/{id}/audio/cancel")).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "cancelar fora da gravação não muda nada"
+    );
+    assert!(card.contains("Na fila"), "{card}");
+    assert_eq!(uploads(&dir).len(), 1);
+}
+
+#[tokio::test]
+async fn guardar_grava_onde_a_janela_mandar_e_lembra_a_pasta() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, _worker, opener, dialog) = audio_state(&dir);
+    let (id, folder) = done_job(&s, &dir, "reuniao.mp4").await;
+    let audios = dir.path().join("Áudios");
+    std::fs::create_dir(&audios).unwrap();
+    let chosen = audios.join("Reunião.m4a");
+    *dialog.answer.lock().unwrap() = Some(chosen.clone());
+
+    let (status, _, card) = post(&s, &format!("/api/jobs/{id}/audio/save")).await;
+    assert_eq!(status, StatusCode::OK, "{card}");
+    assert!(
+        card.contains(&format!(r#"hx-get="/api/jobs/{id}?audio=1""#)),
+        "acompanha pelo polling: {card}"
+    );
+    let (_, card) = final_audio_card(&s, &id).await;
+    let saved = format!(
+        r#"Áudio guardado em <span class="audio-prompt-path">{}</span>"#,
+        chosen.display()
+    );
+    assert!(card.contains(&saved), "{card}");
+    assert!(card.contains("Áudio de reuniao.mp4 guardado."), "{card}");
+    assert!(!card.contains("Guardar o áudio?"), "{card}");
+    assert_eq!(
+        std::fs::read_to_string(&chosen).unwrap(),
+        "áudio de reuniao.mp4"
+    );
+    assert!(uploads(&dir).is_empty(), "guardado apaga o temporário");
+    // Na 1ª vez, a janela abre na pasta da transcrição, com o nome dela.
+    assert_eq!(
+        dialog.asked.lock().unwrap().clone(),
+        [SaveRequest {
+            file_name: "pasta reuniao.mp4.m4a".into(),
+            dir: folder.clone(),
+        }]
+    );
+    assert_eq!(
+        Config::load(&dir.path().join("config.json")).audio_dir,
+        Some(audios.clone())
+    );
+
+    // "Mostrar no Explorer": o arquivo selecionado na pasta dele.
+    let show = format!("/api/jobs/{id}/audio/show");
+    assert_eq!(post(&s, &show).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(
+        *opener.revealed.lock().unwrap(),
+        std::slice::from_ref(&chosen)
+    );
+    std::fs::remove_file(&chosen).unwrap();
+    let (status, _, body) = post(&s, &show).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        body,
+        "Não encontrei o áudio “Reunião.m4a”. Ele foi movido ou apagado."
+    );
+
+    // A próxima abre na pasta lembrada.
+    let (other, other_folder) = done_job(&s, &dir, "aula.mp3").await;
+    let (status, _, body) = post(&s, &format!("/api/jobs/{other}/audio/show")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "nada guardado ainda");
+    assert_eq!(body, "O áudio deste job não foi guardado.");
+    *dialog.answer.lock().unwrap() = Some(folder.join("na pasta da outra.m4a"));
+    post(&s, &format!("/api/jobs/{other}/audio/save")).await;
+    final_audio_card(&s, &other).await;
+    assert_eq!(dialog.asked.lock().unwrap()[1].dir, audios);
+
+    // A última foi a pasta de outra transcrição: a janela abre na desta.
+    let (third, third_folder) = done_job(&s, &dir, "palestra.wav").await;
+    *dialog.answer.lock().unwrap() = None;
+    post(&s, &format!("/api/jobs/{third}/audio/save")).await;
+    final_audio_card(&s, &third).await;
+    assert_eq!(dialog.asked.lock().unwrap()[2].dir, third_folder);
+    assert_ne!(other_folder, third_folder);
+}
+
+#[tokio::test]
+async fn janela_cancelada_nao_apaga_nada_e_mantem_a_pergunta() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, _worker, _, dialog) = audio_state(&dir);
+    let (id, _) = done_job(&s, &dir, "reuniao.mp4").await;
+    let (status, _, _) = post(&s, &format!("/api/jobs/{id}/audio/save")).await;
+    assert_eq!(status, StatusCode::OK);
+    let (headers, card) = final_audio_card(&s, &id).await;
+    assert!(card.contains("Guardar o áudio?"), "{card}");
+    assert!(!headers.contains_key("HX-Trigger"));
+    assert_eq!(uploads(&dir).len(), 1);
+    assert_eq!(dialog.asked.lock().unwrap().len(), 1);
+    assert_eq!(
+        Config::load(&dir.path().join("config.json")).audio_dir,
+        None,
+        "nada escolhido, nada lembrado"
+    );
+}
+
+#[tokio::test]
+async fn erro_ao_guardar_vira_toast_e_a_pergunta_volta() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, _worker, _, dialog) = audio_state(&dir);
+    let (id, _) = done_job(&s, &dir, "audio-ruim.mp4").await;
+    let chosen = dir.path().join("ruim.m4a");
+    *dialog.answer.lock().unwrap() = Some(chosen.clone());
+    post(&s, &format!("/api/jobs/{id}/audio/save")).await;
+    let (headers, card) = final_audio_card(&s, &id).await;
+    assert!(card.contains("Guardar o áudio?"), "{card}");
+    let trigger = headers["HX-Trigger"].to_str().unwrap();
+    assert!(trigger.is_ascii(), "{trigger}");
+    let event: serde_json::Value = serde_json::from_str(trigger).unwrap();
+    assert_eq!(event["scriba-erro"], "Não consegui guardar o áudio.");
+    assert!(!chosen.exists());
+    assert_eq!(uploads(&dir).len(), 1);
+    // A lista não repete o toast.
+    let (_, headers, _) = get_page(&s, "/api/jobs").await;
+    assert!(!headers.contains_key("HX-Trigger"));
+}
+
+#[tokio::test]
+async fn cancelar_a_gravacao_e_remover_so_depois() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, _worker, _, dialog) = audio_state(&dir);
+    let (id, _) = done_job(&s, &dir, "audio-sem-fim.mp4").await;
+    let chosen = dir.path().join("sem-fim.m4a");
+    *dialog.answer.lock().unwrap() = Some(chosen.clone());
+    post(&s, &format!("/api/jobs/{id}/audio/save")).await;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let (_, _, card) = get_page(&s, &format!("/api/jobs/{id}?audio=1")).await;
+        if card.contains("Guardando áudio… 10%") {
+            assert!(
+                card.contains(&format!(r#"hx-post="/api/jobs/{id}/audio/cancel""#)),
+                "{card}"
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "{card}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let remove = format!("/api/jobs/{id}?confirm=1");
+    let (status, _, body) = send(&s, with_origin(Request::delete(&remove))).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body, "Cancele o áudio antes de remover.");
+
+    let (status, _, card) = post(&s, &format!("/api/jobs/{id}/audio/cancel")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(card.contains(r#"aria-disabled="true""#), "{card}");
+    let (_, card) = final_audio_card(&s, &id).await;
+    assert!(card.contains("Guardar o áudio?"), "{card}");
+    assert!(!chosen.exists() && !scriba::jobs::part_path(&chosen).exists());
+    assert_eq!(uploads(&dir).len(), 1);
+    let (status, _, _) = send(&s, with_origin(Request::delete(&remove))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(uploads(&dir).is_empty(), "remover apaga o temporário");
 }

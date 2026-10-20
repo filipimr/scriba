@@ -42,22 +42,30 @@ impl Worker {
         }
     }
 
-    /// Cancela o job em andamento e espera a thread terminar, por até `timeout`. Devolve
-    /// `false` se o pipeline não atendeu ao cancelamento a tempo.
+    /// Cancela o job em andamento e as gravações de áudio, espera as threads terminarem
+    /// por até `timeout` e apaga os envios que esperavam a resposta a "Guardar o áudio?".
+    /// Devolve `false` se o pipeline não atendeu ao cancelamento a tempo.
     pub fn shutdown(mut self, timeout: Duration) -> bool {
         self.jobs.stop();
-        let Some(thread) = self.thread.take() else {
-            return true;
-        };
         let deadline = Instant::now() + timeout;
-        while !thread.is_finished() {
-            if Instant::now() >= deadline {
-                return false;
-            }
-            thread::sleep(Duration::from_millis(10));
+        let mut stopped = self.thread.take().is_none_or(|t| wait(t, deadline));
+        for thread in self.jobs.saving_threads() {
+            stopped &= wait(thread, deadline);
         }
-        thread.join().is_ok()
+        self.jobs.clear_uploads();
+        stopped
     }
+}
+
+/// Espera a thread até `deadline`; `false` se ela não terminou a tempo.
+fn wait(thread: JoinHandle<()>, deadline: Instant) -> bool {
+    while !thread.is_finished() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    thread.join().is_ok()
 }
 
 impl Drop for Worker {

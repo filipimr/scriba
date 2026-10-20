@@ -228,6 +228,12 @@ components:
     typography: "{typography.body-strong}"
     rounded: "{rounded.lg}"
     padding: 24px
+  audio-prompt:
+    backgroundColor: "{colors.canvas-parchment}"
+    textColor: "{colors.ink}"
+    typography: "{typography.callout}"
+    rounded: "{rounded.md}"
+    padding: 12px 16px
   progress-bar:
     backgroundColor: "{colors.divider-soft}"
     fillColor: "{colors.primary}"
@@ -584,9 +590,19 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 - À direita do card, um único `{component.button-icon}` de ação, que mantém o foco do teclado quando o card se atualiza.
 - Na fila: o badge, o botão de cancelar e, abaixo dos metadados, a estimativa no mesmo estilo: "Cerca de 4 min na GPU", "Menos de 1 min no processador".
 - Ativo: etapa atual ("Transcrevendo… 42%") e `{component.progress-bar}`, com o botão de cancelar. Depois do pedido, a etapa vira "Cancelando…" e o botão fica inativo até o pipeline parar.
-- Concluído: uma linha própria abaixo dos metadados com `{component.button-primary}` "Ver transcrição", `{component.button-secondary}` "Baixar .txt" e "Baixar .md" e `{component.button-utility}` "Abrir pasta". A linha quebra quando não cabe. Para leitores de tela, cada ação leva o nome do arquivo ("Baixar .txt de reuniao.mp4").
+- Concluído: uma linha própria abaixo dos metadados com `{component.button-primary}` "Ver transcrição", `{component.button-secondary}` "Baixar .txt" e "Baixar .md" e `{component.button-utility}` "Abrir pasta". A linha quebra quando não cabe. Para leitores de tela, cada ação leva o nome do arquivo ("Baixar .txt de reuniao.mp4"). Abaixo dela, o `{component.audio-prompt}` com "Guardar o áudio?".
+- Guardando o áudio: o botão de ação vira cancelar ("Cancelar o áudio de reuniao.mp4"), como num job ativo; com a janela "Salvar como" aberta, ele fica inativo.
 - Falhou: mensagem em `{component.alert-inline}` e, logo abaixo, `{component.button-secondary}` "Tentar de novo", que devolve o job à fila com o mesmo arquivo.
 - Concluído, Falhou ou Cancelado: o botão de ação vira "Remover" (lixeira), que tira o job da lista. Em Falhou e Cancelado, remover só apaga a cópia temporária do envio e não pede confirmação; em Concluído, a pasta da transcrição vai para a Lixeira, depois do `{component.confirm-dialog}`.
+
+**`audio-prompt`** — A pergunta do fim de cada transcrição, dentro do card concluído: fundo `{colors.canvas-parchment}` (a troca de superfície separa a pergunta das ações do resultado, sem borda nem cor), texto `{colors.ink}` em `{typography.callout}`, `{rounded.md}`, padding 12 × 16 px. Estados:
+
+- **Pendente:** "Guardar o áudio?" e, abaixo, dois `{component.button-secondary}`: "Guardar áudio" e "Descartar". Os dois têm o mesmo peso, porque nenhuma resposta é a errada, e levam o nome do arquivo para leitores de tela ("Guardar áudio de reuniao.mp4"). "Descartar" não pede confirmação: a mídia é descartável e o original do usuário nunca é tocado.
+- **Escolhendo:** "Escolhendo onde guardar…" enquanto a janela "Salvar como" do Windows está aberta. Cancelar a janela volta à pergunta.
+- **Guardando:** "Guardando áudio… 42%" com a `{component.progress-bar}`; depois do pedido de cancelar, "Cancelando…". Cancelar volta à pergunta.
+- **Guardado:** "Áudio guardado em C:\…\2026-10-20 1430 - Reunião.m4a" (o caminho quebra em qualquer ponto) e o `{component.button-utility}` "Mostrar no Explorer" (ícone folder-search), que abre a pasta com o arquivo selecionado.
+- **Descartado:** o bloco some e o card volta a ter só as ações do resultado.
+- **Erro:** a mensagem vem num `{component.toast}` ("Não consegui guardar o áudio. Confira o espaço livre e se a pasta permite gravação, e tente de novo.") e a pergunta volta, para tentar de novo ou descartar.
 
 **`progress-bar`** — Trilho de 4 px em `{colors.divider-soft}`, preenchimento `{colors.primary}`, pílula. É o elemento nativo `<progress>`, que já expõe o papel `progressbar` e o valor; a política de segurança do app (CSP) bloqueia a largura por `style` inline.
 
@@ -653,9 +669,9 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 ## Voz e microcopy
 
 - Português do Brasil, frases curtas, tratamento por "você".
-- Botões com verbos diretos: "Gravar", "Parar", "Escolher arquivo", "Ver transcrição", "Copiar texto", "Baixar .txt", "Baixar .md", "Abrir pasta", "Tentar de novo", "Excluir".
+- Botões com verbos diretos: "Gravar", "Parar", "Escolher arquivo", "Ver transcrição", "Copiar texto", "Baixar .txt", "Baixar .md", "Abrir pasta", "Tentar de novo", "Excluir", "Guardar áudio", "Descartar", "Mostrar no Explorer".
 - Confirmações curtas, sem ponto: "Texto copiado".
-- Etapas no gerúndio: "Na fila", "Extraindo áudio…", "Transcrevendo… 42%", "Cancelando…".
+- Etapas no gerúndio: "Na fila", "Extraindo áudio…", "Transcrevendo… 42%", "Guardando áudio… 42%", "Cancelando…".
 - Estimativas arredondadas e sem falsa precisão: "Cerca de 4 min na GPU", "Menos de 1 min no processador". "Processador" no lugar de "CPU".
 - Erros dizem o que aconteceu e o que fazer: "Este arquivo não tem áudio. Escolha um vídeo com som." — nunca códigos ou jargão técnico.
 - Sem exclamações, sem emojis.
@@ -699,4 +715,5 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 - **Ilustrações de estado vazio:** a v1 usa apenas ícones Lucide.
 - **Ícone da bandeja do Windows:** precisa de variantes clara e escura, conforme o tema da barra de tarefas.
 - **Card concluído e leitor:** resolvido na etapa 4.5: as ações do card concluído ("Ver transcrição", "Baixar .txt", "Baixar .md", "Abrir pasta") numa linha própria, o `transcript-view` com o "‹ Recentes" e os estados sem fala e de transcrição ausente, o `toast` (também para os erros de ação) e o `button-utility` com 44 px de altura. Resolvidos na 4.4: a dropzone sem as caixinhas, o estilo do "Tentar de novo", o backend no rodapé e a estimativa no card, e o texto do `confirm-dialog`.
+- **Guardar o áudio:** resolvido na Fase 5 com o `audio-prompt` (YAML e prosa): a pergunta no card concluído, os estados escolhendo, guardando e guardado, o "Mostrar no Explorer" e o erro em toast. A janela "Salvar como" é a nativa do Windows, fora do design system. Na Fase 6, a gravação reaproveita o mesmo componente.
 - **Link para a pasta de saídas no rodapé:** descrito em `footer`, ainda não implementado; o "Abrir pasta" de cada job cobre o caso por enquanto.

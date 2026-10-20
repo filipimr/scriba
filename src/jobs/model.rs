@@ -98,6 +98,8 @@ pub enum State {
     },
     Done {
         outputs: Outputs,
+        /// A resposta à pergunta "Guardar o áudio?".
+        audio: Audio,
     },
     Failed {
         message: String,
@@ -116,6 +118,99 @@ pub enum Event {
     Panicked,
     /// "Tentar de novo" num job que falhou: volta para a fila.
     Retry,
+    /// "Guardar o áudio?" num job concluído.
+    Audio(AudioEvent),
+}
+
+/// "Guardar o áudio?" de um job concluído. O envio fica em `uploads/` até a resposta:
+/// "Descartar" o apaga; "Guardar áudio" abre o "Salvar como", grava o `.m4a` e o apaga.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Audio {
+    /// Esperando a resposta; `error` é o motivo de a última tentativa de guardar ter
+    /// falhado.
+    Pending {
+        error: Option<String>,
+    },
+    /// A janela "Salvar como" está aberta.
+    Choosing,
+    Saving {
+        pct: u8,
+        /// O usuário pediu para cancelar; a gravação ainda não parou.
+        canceling: bool,
+    },
+    Saved {
+        path: PathBuf,
+    },
+    Discarded,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AudioEvent {
+    Discard,
+    /// "Guardar áudio": a janela abre.
+    Choose,
+    /// A janela fechou: o arquivo escolhido, ou `None` se o usuário cancelou.
+    Chosen(Option<PathBuf>),
+    Progress(u8),
+    Cancel,
+    /// O fim da gravação, com o arquivo gravado; um erro antes da escolha é a janela que
+    /// não abriu.
+    Finished(Result<PathBuf, Failure>),
+}
+
+impl Audio {
+    /// A pergunta, sem resposta ainda.
+    pub const PENDING: Self = Self::Pending { error: None };
+
+    pub fn apply(&self, event: AudioEvent) -> Result<Self, Invalid> {
+        use Audio::{Choosing, Discarded, Pending, Saved, Saving};
+        match (self, event) {
+            (Pending { .. }, AudioEvent::Discard) => Ok(Discarded),
+            (Pending { .. }, AudioEvent::Choose) => Ok(Choosing),
+            (Choosing, AudioEvent::Chosen(None)) => Ok(Self::PENDING),
+            (Choosing, AudioEvent::Chosen(Some(_))) => Ok(Saving {
+                pct: 0,
+                canceling: false,
+            }),
+            (Choosing, AudioEvent::Finished(Err(Failure::Error(message)))) => Ok(Pending {
+                error: Some(message),
+            }),
+            (Saving { canceling, .. }, AudioEvent::Progress(pct)) => Ok(Saving {
+                pct: pct.min(100),
+                canceling: *canceling,
+            }),
+            (Saving { pct, .. }, AudioEvent::Cancel) => Ok(Saving {
+                pct: *pct,
+                canceling: true,
+            }),
+            // O arquivo ficou pronto: vale mesmo com um cancelamento pedido no fim.
+            (Saving { .. }, AudioEvent::Finished(Ok(path))) => Ok(Saved { path }),
+            // Cancelado, ou um erro depois do pedido: a pergunta volta, sem mensagem.
+            (
+                Saving {
+                    canceling: true, ..
+                },
+                AudioEvent::Finished(Err(_)),
+            )
+            | (Saving { .. }, AudioEvent::Finished(Err(Failure::Canceled))) => Ok(Self::PENDING),
+            (Saving { .. }, AudioEvent::Finished(Err(Failure::Error(message)))) => Ok(Pending {
+                error: Some(message),
+            }),
+            // Cancelar o que não está gravando não muda nada.
+            (_, AudioEvent::Cancel) => Ok(self.clone()),
+            _ => Err(Invalid),
+        }
+    }
+
+    /// A janela está aberta ou o `.m4a` está sendo gravado: o envio ainda é usado.
+    pub fn busy(&self) -> bool {
+        matches!(self, Self::Choosing | Self::Saving { .. })
+    }
+
+    /// Respondida: o envio já foi apagado.
+    pub fn answered(&self) -> bool {
+        matches!(self, Self::Saved { .. } | Self::Discarded)
+    }
 }
 
 /// Evento que não vale no estado atual (ex.: começar um job cancelado).
@@ -143,7 +238,10 @@ impl State {
                 canceling: true,
             }),
             // O trabalho terminou: o resultado vale mesmo com um cancelamento pedido no fim.
-            (Running { .. }, Event::Finished(Ok(outputs))) => Ok(Done { outputs }),
+            (Running { .. }, Event::Finished(Ok(outputs))) => Ok(Done {
+                outputs,
+                audio: Audio::PENDING,
+            }),
             // Um erro depois do pedido é consequência da interrupção.
             (
                 Running {
@@ -159,6 +257,10 @@ impl State {
                 message: PANIC_MESSAGE.into(),
             }),
             (Failed { .. }, Event::Retry) => Ok(Queued),
+            (Done { outputs, audio }, Event::Audio(event)) => Ok(Done {
+                outputs: outputs.clone(),
+                audio: audio.apply(event)?,
+            }),
             // Cancelar o que já terminou não muda nada.
             (Done { .. } | Failed { .. } | Canceled, Event::Cancel) => Ok(self.clone()),
             _ => Err(Invalid),
@@ -186,8 +288,9 @@ pub struct Job {
     /// Hora local do envio, a mesma do nome da pasta da saída.
     pub created: LocalTime,
     pub estimate: Option<Estimate>,
-    /// Cópia enviada, em `uploads/`. Apagada quando o job conclui, é cancelado ou é
-    /// removido; num job que falhou, fica para o "Tentar de novo".
+    /// Cópia enviada, em `uploads/`. Num job concluído, fica até a resposta a "Guardar o
+    /// áudio?"; num que falhou, para o "Tentar de novo". Apagada quando o job é cancelado ou
+    /// removido, e ao fechar o app.
     pub input: PathBuf,
     pub state: State,
 }
@@ -209,6 +312,7 @@ mod tests {
     fn done() -> State {
         State::Done {
             outputs: Outputs::default(),
+            audio: Audio::PENDING,
         }
     }
 
@@ -309,6 +413,170 @@ mod tests {
         assert_eq!(Media::detect(".wav"), Some((Media::Audio, "wav")));
     }
 
+    fn saving(canceling: bool) -> Audio {
+        Audio::Saving { pct: 40, canceling }
+    }
+
+    #[test]
+    fn guardar_o_audio() {
+        let path = || PathBuf::from("C:/Áudios/reunião.m4a");
+        let error = || Failure::Error("Disco cheio.".into());
+        let failed = || Audio::Pending {
+            error: Some("Disco cheio.".into()),
+        };
+        let cases = [
+            (Audio::PENDING, AudioEvent::Discard, Audio::Discarded),
+            (Audio::PENDING, AudioEvent::Choose, Audio::Choosing),
+            (failed(), AudioEvent::Choose, Audio::Choosing),
+            (Audio::Choosing, AudioEvent::Chosen(None), Audio::PENDING),
+            (
+                Audio::Choosing,
+                AudioEvent::Chosen(Some(path())),
+                Audio::Saving {
+                    pct: 0,
+                    canceling: false,
+                },
+            ),
+            (
+                Audio::Choosing,
+                AudioEvent::Finished(Err(error())),
+                failed(),
+            ),
+            (
+                saving(false),
+                AudioEvent::Progress(250),
+                Audio::Saving {
+                    pct: 100,
+                    canceling: false,
+                },
+            ),
+            (saving(false), AudioEvent::Cancel, saving(true)),
+            (
+                saving(true),
+                AudioEvent::Progress(50),
+                Audio::Saving {
+                    pct: 50,
+                    canceling: true,
+                },
+            ),
+            (
+                saving(true),
+                AudioEvent::Finished(Ok(path())),
+                Audio::Saved { path: path() },
+            ),
+            (
+                saving(true),
+                AudioEvent::Finished(Err(error())),
+                Audio::PENDING,
+            ),
+            (
+                saving(false),
+                AudioEvent::Finished(Err(Failure::Canceled)),
+                Audio::PENDING,
+            ),
+            (saving(false), AudioEvent::Finished(Err(error())), failed()),
+            (Audio::Discarded, AudioEvent::Cancel, Audio::Discarded),
+            (Audio::PENDING, AudioEvent::Cancel, Audio::PENDING),
+        ];
+        for (audio, event, expected) in cases {
+            assert_eq!(
+                audio.apply(event.clone()),
+                Ok(expected),
+                "{audio:?} + {event:?}"
+            );
+        }
+        for (audio, event) in [
+            (Audio::Discarded, AudioEvent::Choose),
+            (Audio::Saved { path: path() }, AudioEvent::Discard),
+            (Audio::Choosing, AudioEvent::Discard),
+            (saving(false), AudioEvent::Choose),
+            (saving(false), AudioEvent::Discard),
+            (Audio::PENDING, AudioEvent::Chosen(None)),
+            (Audio::PENDING, AudioEvent::Finished(Ok(path()))),
+        ] {
+            assert_eq!(
+                audio.apply(event.clone()),
+                Err(Invalid),
+                "{audio:?} + {event:?}"
+            );
+        }
+        assert!(Audio::Choosing.busy() && saving(true).busy() && !Audio::PENDING.busy());
+        assert!(Audio::Discarded.answered() && !failed().answered());
+    }
+
+    #[test]
+    fn so_o_job_concluido_responde_a_pergunta() {
+        for state in [
+            State::Queued,
+            running(false),
+            State::Canceled,
+            State::Failed {
+                message: "x".into(),
+            },
+        ] {
+            assert_eq!(
+                state.apply(Event::Audio(AudioEvent::Discard)),
+                Err(Invalid),
+                "{state:?}"
+            );
+        }
+        let after = done().apply(Event::Audio(AudioEvent::Discard)).unwrap();
+        assert_eq!(
+            after,
+            State::Done {
+                outputs: Outputs::default(),
+                audio: Audio::Discarded
+            }
+        );
+        assert_eq!(after.apply(Event::Audio(AudioEvent::Discard)), Err(Invalid));
+    }
+
+    fn audio_event() -> impl Strategy<Value = AudioEvent> {
+        prop_oneof![
+            Just(AudioEvent::Discard),
+            Just(AudioEvent::Choose),
+            Just(AudioEvent::Chosen(None)),
+            Just(AudioEvent::Chosen(Some("a.m4a".into()))),
+            any::<u8>().prop_map(AudioEvent::Progress),
+            Just(AudioEvent::Cancel),
+            Just(AudioEvent::Finished(Ok("a.m4a".into()))),
+            Just(AudioEvent::Finished(Err(Failure::Canceled))),
+            "[a-z]{1,8}".prop_map(|m| AudioEvent::Finished(Err(Failure::Error(m)))),
+        ]
+    }
+
+    proptest! {
+        /// Como o store: aplica cada evento e ignora os inválidos.
+        #[test]
+        fn pergunta_do_audio_mantem_as_invariantes(
+            events in prop::collection::vec(audio_event(), 0..40)
+        ) {
+            let mut audio = Audio::PENDING;
+            for event in events {
+                let before = audio.clone();
+                if let Ok(next) = before.apply(event.clone()) {
+                    audio = next;
+                }
+                // A resposta é definitiva.
+                if before.answered() {
+                    prop_assert_eq!(&audio, &before);
+                }
+                // Só se guarda o que passou pela janela e pela gravação.
+                if matches!(audio, Audio::Saved { .. }) && !before.answered() {
+                    let was_saving = matches!(before, Audio::Saving { .. });
+                    prop_assert!(was_saving, "{:?}", before);
+                }
+                if let Audio::Saving { pct, canceling } = &audio {
+                    prop_assert!(*pct <= 100);
+                    // Um pedido de cancelamento nunca se perde enquanto grava.
+                    if matches!(before, Audio::Saving { canceling: true, .. }) {
+                        prop_assert!(*canceling);
+                    }
+                }
+            }
+        }
+    }
+
     fn stage() -> impl Strategy<Value = Stage> {
         prop_oneof![Just(Stage::ExtractingAudio), Just(Stage::Transcribing)]
     }
@@ -323,6 +591,7 @@ mod tests {
             "[a-z]{1,8}".prop_map(|m| Event::Finished(Err(Failure::Error(m)))),
             Just(Event::Panicked),
             Just(Event::Retry),
+            audio_event().prop_map(Event::Audio),
         ]
     }
 
@@ -340,11 +609,21 @@ mod tests {
                     state = next;
                 }
                 // Estado final é absorvente, exceto "Tentar de novo" num job que falhou, que
-                // volta para a fila.
+                // volta para a fila, e a resposta ao "Guardar o áudio?", que mantém o job
+                // concluído com as mesmas saídas.
                 let retried = matches!(before, State::Failed { .. }) && event == Event::Retry;
                 if retried {
                     prop_assert_eq!(&state, &State::Queued);
+                } else if let State::Done { outputs, .. } = &before {
+                    let State::Done { outputs: after, .. } = &state else {
+                        panic!("{state:?}");
+                    };
+                    prop_assert_eq!(outputs, after);
                 } else if before.is_terminal() || event == Event::Retry {
+                    prop_assert_eq!(&state, &before);
+                }
+                // Só o job concluído responde à pergunta.
+                if matches!(event, Event::Audio(_)) && !matches!(before, State::Done { .. }) {
                     prop_assert_eq!(&state, &before);
                 }
                 // Só começa quem estava na fila.

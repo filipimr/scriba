@@ -123,7 +123,7 @@ pub fn folder_label(dir: &FsPath) -> String {
 fn done_job(state: &AppState, id: &str) -> Option<(Job, Outputs)> {
     let job = state.jobs.get(id.parse().ok()?)?;
     match &job.state {
-        JobState::Done { outputs } => {
+        JobState::Done { outputs, .. } => {
             let outputs = outputs.clone();
             Some((job, outputs))
         }
@@ -354,7 +354,10 @@ mod tests {
                 gpu: true,
             }),
             input: "nada".into(),
-            state: JobState::Done { outputs },
+            state: JobState::Done {
+                outputs,
+                audio: crate::jobs::Audio::PENDING,
+            },
         }
     }
 

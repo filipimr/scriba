@@ -2,14 +2,19 @@
 //! percorre as etapas com progresso simulado, sem ler o arquivo, e grava uma transcrição fixa
 //! com o módulo `transcript` real. Ganchos pelo nome do arquivo:
 //!
-//! - `lento`: 10× mais devagar;
+//! - `lento`: 10× mais devagar, também ao guardar o áudio;
 //! - `falha`: erro na metade da primeira etapa;
 //! - `falha-uma-vez`: o mesmo erro, só na primeira tentativa do job;
 //! - `panico`: panic no mesmo ponto;
-//! - `sem-audio`: o probe recusa o envio.
+//! - `sem-audio`: o probe recusa o envio;
+//! - `audio-ruim`: "Guardar áudio" falha na metade;
+//! - `audio-demorado`: só o "Guardar áudio" 10× mais devagar.
+//!
+//! "Guardar áudio" também não lê o envio: grava um texto fixo no lugar do `.m4a`.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
@@ -31,6 +36,7 @@ pub struct FakePipeline {
 
 impl FakePipeline {
     pub const FAILURE: &'static str = "Não foi possível processar este arquivo (falha simulada).";
+    pub const AUDIO_FAILURE: &'static str = "Não consegui guardar o áudio (falha simulada).";
     pub const BACKEND: &'static str = "Transcrição no processador";
     /// Duração que o probe falso informa: 2 min.
     pub const DURATION_MS: u64 = 120_000;
@@ -59,6 +65,15 @@ impl FakePipeline {
         self.tick = tick;
         self
     }
+
+    /// A pausa para o arquivo `name` (em minúsculas).
+    fn tick_for(&self, name: &str) -> Duration {
+        if name.contains("lento") {
+            self.tick * 10
+        } else {
+            self.tick
+        }
+    }
 }
 
 impl Pipeline for FakePipeline {
@@ -77,13 +92,41 @@ impl Pipeline for FakePipeline {
         Some(Self::BACKEND.into())
     }
 
-    fn run(&self, job: &Job, ctx: &Ctx) -> Result<Outputs, Failure> {
+    fn save_audio(
+        &self,
+        job: &Job,
+        output: &Path,
+        progress: &mut dyn FnMut(u8),
+        cancel: &AtomicBool,
+    ) -> Result<(), Failure> {
         let name = job.name.to_lowercase();
-        let tick = if name.contains("lento") {
+        let tick = if name.contains("audio-demorado") {
             self.tick * 10
         } else {
-            self.tick
+            self.tick_for(&name)
         };
+        for step in 0..=STEPS {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(Failure::Canceled);
+            }
+            let pct = step * (100 / STEPS);
+            if pct == 50 && name.contains("audio-ruim") {
+                return Err(Failure::Error(Self::AUDIO_FAILURE.into()));
+            }
+            progress(pct);
+            if step < STEPS {
+                thread::sleep(tick);
+            }
+        }
+        std::fs::write(output, format!("áudio simulado de {}", job.name)).map_err(|e| {
+            eprintln!("não consegui gravar {}: {e}", output.display());
+            crate::media::Error::Encode.into()
+        })
+    }
+
+    fn run(&self, job: &Job, ctx: &Ctx) -> Result<Outputs, Failure> {
+        let name = job.name.to_lowercase();
+        let tick = self.tick_for(&name);
         for (i, stage) in [Stage::ExtractingAudio, Stage::Transcribing]
             .into_iter()
             .enumerate()
@@ -232,6 +275,38 @@ mod tests {
         let (result, seen) = run(&fake(&dir), &job("reuniao.mp4"), true);
         assert_eq!(result, Err(Failure::Canceled));
         assert!(seen.is_empty());
+    }
+
+    #[test]
+    fn guardar_audio_simulado() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipeline = fake(&dir);
+        let out = dir.path().join("a.m4a");
+        let mut seen = Vec::new();
+        pipeline
+            .save_audio(
+                &job("reuniao.mp4"),
+                &out,
+                &mut |p| seen.push(p),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&out).unwrap(),
+            "áudio simulado de reuniao.mp4"
+        );
+        assert_eq!((seen.first(), seen.last()), (Some(&0), Some(&100)));
+
+        let out = dir.path().join("b.m4a");
+        let save = |name: &str, canceled: bool| {
+            pipeline.save_audio(&job(name), &out, &mut |_| {}, &AtomicBool::new(canceled))
+        };
+        assert_eq!(
+            save("Audio-Ruim.mp4", false),
+            Err(Failure::Error(FakePipeline::AUDIO_FAILURE.into()))
+        );
+        assert_eq!(save("reuniao.mp4", true), Err(Failure::Canceled));
+        assert!(!out.exists());
     }
 
     #[test]

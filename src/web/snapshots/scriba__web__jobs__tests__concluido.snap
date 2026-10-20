@@ -82,6 +82,15 @@ expression: html
   <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
 </svg>Abrir pasta</button>
     </div>
+    <div class="audio-prompt">
+      <p class="audio-prompt-text">Guardar o áudio?</p>
+      <div class="audio-prompt-actions">
+        <button class="btn btn-secondary" type="button" aria-label="Guardar áudio de Reunião &#60;equipe&#62;.mp4"
+          hx-post="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/audio/save" hx-target="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" hx-swap="outerHTML" hx-sync="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0:replace">Guardar áudio</button>
+        <button class="btn btn-secondary" type="button" aria-label="Descartar áudio de Reunião &#60;equipe&#62;.mp4"
+          hx-post="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/audio/discard" hx-target="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" hx-swap="outerHTML" hx-sync="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0:replace">Descartar</button>
+      </div>
+    </div>
   </div>
   <button id="acao-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" class="btn-icon" type="button" aria-label="Remover Reunião &#60;equipe&#62;.mp4" title="Remover" hx-delete="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0?confirm=1" hx-confirm="A pasta “2026-10-20 1430 - Reunião equipe” vai para a Lixeira." hx-target="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" hx-swap="outerHTML" hx-sync="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0:replace"><!-- @license lucide-static v1.59.0 - ISC -->
 <svg

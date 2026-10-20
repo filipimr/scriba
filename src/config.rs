@@ -87,6 +87,8 @@ impl Theme {
 #[serde(default)]
 pub struct Config {
     pub theme: Theme,
+    /// A última pasta escolhida no "Guardar áudio".
+    pub audio_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -124,7 +126,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sub").join("config.json");
         assert_eq!(Config::load(&path), Config::default());
-        let cfg = Config { theme: Theme::Dark };
+        let cfg = Config {
+            theme: Theme::Dark,
+            audio_dir: Some(r"C:\Áudios\Reuniões".into()),
+        };
         cfg.save(&path).unwrap();
         assert_eq!(Config::load(&path), cfg);
     }
@@ -137,6 +142,15 @@ mod tests {
         assert_eq!(Config::load(&path), Config::default());
         fs::write(&path, "{}").unwrap();
         assert_eq!(Config::load(&path).theme, Theme::System);
+        // O config.json de antes da Fase 5 não tem a pasta do áudio.
+        fs::write(&path, r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(
+            Config::load(&path),
+            Config {
+                theme: Theme::Dark,
+                audio_dir: None
+            }
+        );
     }
 
     #[test]
