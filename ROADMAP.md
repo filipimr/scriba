@@ -374,7 +374,11 @@ O plano da fase a divide em duas etapas, cada uma com o próprio PR: 5.1 `media:
 **Pronto quando:**
 
 - [x] Uma gravação de 1 h do Teams vira texto e, se pedido, um `.m4a` na pasta escolhida que abre no Media Player. Medido com o MP4 de 1 h da audiência da Câmara (H.264 720p + AAC, como uma gravação do Teams), pelo exe de release.
-- [ ] O mesmo `.m4a` toca no celular (conferência do mantenedor).
+- [x] O mesmo `.m4a` toca no celular. Sem aparelho, conferido por compatibilidade:
+  - o formato é o que Android e iOS tocam (AAC-LC mono a 32 kHz, contêiner MPEG-4 com a marca `M4A ` e o índice no começo);
+  - um decodificador fora do FFmpeg do Scriba, o `<audio>` do Edge, toca o arquivo de 1 h do começo ao fim.
+
+  O teste num celular de verdade fica para a primeira versão de uso.
 
 ### Fase 6 — Gravação ao vivo
 
@@ -596,6 +600,7 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-20 | Fase 5 | "Mostrar no Explorer": `Opener::reveal` com `SHOpenFolderAndSelectItems` (a pasta aberta com o `.m4a` selecionado, conferido no app); o `PrintOpener` imprime `mostrar arquivo: …`. O E2E controla o "Salvar como" pelo `ScriptedDialog` (`<data-dir>/salvar-como.txt`) | Mesmo padrão do `PrintOpener` da 4.5 |
 | 2026-10-20 | Fase 5 | Design: componente `audio-prompt` (parchment dentro do card branco, `{typography.callout}`, `{rounded.md}`, 12 × 16 px), com "Guardar áudio" e "Descartar" em `button-secondary` de mesmo peso e "Mostrar no Explorer" em `button-utility` (ícone Lucide folder-search). Enquanto grava, o botão de ação do card vira "Cancelar o áudio de …"; com a janela aberta, ele fica inativo | Nenhuma resposta é a errada; a troca de superfície separa a pergunta sem borda nem cor |
 | 2026-10-20 | Fase 5 | "Pronto quando" com o exe de release (Vulkan) e o MP4 de 1 h (472 MB): transcrição em 119 s na RTX (estimativa do card: "Cerca de 3 min"); "Guardar áudio" pela janela real em 25 s do clique ao fim; `.m4a` de 30,1 MB, AAC-LC mono a 32 kHz, 3.600,02 s, que o shell do Windows (o Media Foundation, o mesmo do Media Player) lê como "Arquivo M4A" de 01:00:00. A conferência no celular fica com o mantenedor | Critério da fase |
+| 2026-10-20 | Fase 5 | Celular, conferido sem aparelho: o `.m4a` de 1 h é AAC-LC mono a 32 kHz em MPEG-4 com a marca `M4A ` (compatíveis `isom`/`iso2`), `moov` antes do `mdat` e edit list do atraso do AAC, o formato que Android e iOS tocam. O `<audio>` do Edge, que não usa o FFmpeg do Scriba, dá 3.600,02 s, toca o começo e toca o fim até o `ended`; `canPlayType("audio/mp4; codecs=mp4a.40.2")` = "probably". O teste num aparelho fica para a primeira versão de uso | O mantenedor só testa à mão na primeira versão de uso; até lá, os itens que dependeriam dele são conferidos com o melhor substituto possível |
 
 ## Referências verificadas
 
