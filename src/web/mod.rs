@@ -84,6 +84,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/jobs/{id}", get(jobs::show).delete(jobs::remove))
         .route("/api/jobs/{id}/cancel", post(jobs::cancel))
+        .route("/api/jobs/{id}/retry", post(jobs::retry))
         .route("/health", get(pages::health))
         .route("/assets/{*path}", get(assets::serve))
         .layer(from_fn_with_state(state.clone(), security::guard))

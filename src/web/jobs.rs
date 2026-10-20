@@ -6,18 +6,20 @@ use std::path::{Path as FsPath, PathBuf};
 
 use askama::Template;
 use axum::extract::multipart::Field;
-use axum::extract::{Multipart, Path, State};
+use axum::extract::{Multipart, Path, RawQuery, State};
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use tokio::io::{AsyncWriteExt, BufWriter};
 
 use super::AppState;
-use crate::jobs::{FORMATS, Job, JobId, Jobs, Media, Options, RemoveError, State as JobState};
+use crate::clock::LocalTime;
+use crate::jobs::{
+    Estimate, FORMATS, Failure, Job, JobId, Jobs, Media, PANIC_MESSAGE, Probe, RemoveError,
+    RetryError, State as JobState,
+};
 
 /// Resposta que encerra o polling do htmx.
 const STOP_POLLING: u16 = 286;
-
-pub const NO_OPTIONS: &str = "Escolha Transcrever, Compactar ou os dois.";
 
 /// "Formato não suportado. Use MP4, MOV, MKV, MP3, M4A, WAV ou OGG."
 pub fn format_error() -> String {
@@ -42,7 +44,13 @@ pub struct Card {
     pub id: String,
     pub name: String,
     pub video: bool,
+    /// "2 min"; `None` quando o arquivo não informa.
+    pub duration: Option<String>,
     pub size: String,
+    /// Data e hora do envio, num `<span>` próprio (a referência visual a mascara).
+    pub date: String,
+    /// Só na fila: "Cerca de 4 min na GPU".
+    pub estimate: Option<String>,
     pub badge: &'static str,
     /// Sufixo da variante do `status-badge` (`active`, `success`, `error`); vazio no neutro.
     pub badge_variant: &'static str,
@@ -53,6 +61,10 @@ pub struct Card {
     pub stage: Option<String>,
     pub pct: u8,
     pub error: Option<String>,
+    /// Falhou: oferece "Tentar de novo".
+    pub retry: bool,
+    /// Concluído: a pasta da saída, que o Remover manda para a Lixeira depois do diálogo.
+    pub folder: Option<String>,
 }
 
 impl Card {
@@ -79,7 +91,13 @@ impl Card {
             id: job.id.to_string(),
             name: job.name.clone(),
             video: job.media == Media::Video,
+            duration: format_duration(job.duration_ms),
             size: format_size(job.size),
+            date: job.created.display(),
+            estimate: match (&job.state, job.estimate) {
+                (JobState::Queued, Some(e)) => Some(format_estimate(e)),
+                _ => None,
+            },
             badge,
             badge_variant,
             active: !job.state.is_terminal(),
@@ -88,6 +106,16 @@ impl Card {
             pct,
             error: match &job.state {
                 JobState::Failed { message } => Some(message.clone()),
+                _ => None,
+            },
+            retry: matches!(job.state, JobState::Failed { .. }),
+            folder: match &job.state {
+                JobState::Done { outputs } => Some(
+                    outputs
+                        .dir
+                        .file_name()
+                        .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
+                ),
                 _ => None,
             },
         }
@@ -160,22 +188,64 @@ pub async fn cancel(State(state): State<AppState>, Path(id): Path<String>) -> Re
     fragment(StatusCode::OK, vec![Card::new(&job)], notice)
 }
 
-/// Corpo vazio: o htmx troca o card por nada.
-pub async fn remove(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+/// Corpo vazio: o htmx troca o card por nada. Um job concluído só sai com `?confirm=1`
+/// (o `confirm-dialog` da tela), e a pasta da saída vai para a Lixeira.
+pub async fn remove(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    RawQuery(query): RawQuery,
+) -> Response {
     let Ok(id) = id.parse::<JobId>() else {
         return not_found();
     };
-    match state.jobs.remove(id) {
+    let confirmed = query
+        .as_deref()
+        .is_some_and(|q| q.split('&').any(|p| p == "confirm=1"));
+    // O shell da Lixeira bloqueia.
+    let jobs = state.jobs.clone();
+    let result = tokio::task::spawn_blocking(move || jobs.remove(id, confirmed))
+        .await
+        .unwrap_or(Err(RemoveError::Trash));
+    match result {
         Ok(()) => StatusCode::OK.into_response(),
         Err(RemoveError::NotFound) => not_found(),
         Err(RemoveError::Active) => {
             (StatusCode::CONFLICT, "Cancele o job antes de remover.").into_response()
         }
+        Err(RemoveError::NeedsConfirm) => (
+            StatusCode::CONFLICT,
+            "Confirme para mandar a transcrição para a Lixeira.",
+        )
+            .into_response(),
+        Err(RemoveError::Trash) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Não consegui mandar a pasta para a Lixeira.",
+        )
+            .into_response(),
     }
 }
 
-/// `POST /api/jobs` (multipart): opções `transcrever`/`compactar` e um ou mais campos
-/// `arquivo`, gravados em streaming em `uploads/`. Cada arquivo vira um job.
+/// "Tentar de novo": o job volta para a fila e o card, ativo, retoma o polling.
+pub async fn retry(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Ok(id) = id.parse::<JobId>() else {
+        return not_found();
+    };
+    match state.jobs.retry(id) {
+        Ok(job) => {
+            let notice = format!("{} na fila.", job.name);
+            fragment(StatusCode::OK, vec![Card::new(&job)], Some(notice))
+        }
+        Err(RetryError::NotFound) => not_found(),
+        Err(RetryError::NotFailed) => (
+            StatusCode::CONFLICT,
+            "Só um job que falhou pode ser tentado de novo.",
+        )
+            .into_response(),
+    }
+}
+
+/// `POST /api/jobs` (multipart): um ou mais campos `arquivo`, gravados em streaming em
+/// `uploads/` e lidos pelo probe. Cada arquivo vira um job.
 pub async fn create(State(state): State<AppState>, mut multipart: Multipart) -> Response {
     let mut received = Vec::new();
     match receive(&state.jobs, &mut multipart, &mut received).await {
@@ -207,7 +277,8 @@ pub async fn create(State(state): State<AppState>, mut multipart: Multipart) -> 
 #[derive(Debug)]
 enum UploadError {
     Format,
-    NoOptions,
+    /// O probe recusou o arquivo (sem áudio, não é mídia), com a mensagem dele.
+    Rejected(String),
     NoFile,
     /// O cliente caiu ou mandou um multipart inválido.
     Interrupted,
@@ -223,7 +294,7 @@ impl From<io::Error> for UploadError {
 fn upload_error(e: &UploadError) -> Response {
     let (status, message) = match e {
         UploadError::Format => (StatusCode::UNPROCESSABLE_ENTITY, format_error()),
-        UploadError::NoOptions => (StatusCode::UNPROCESSABLE_ENTITY, NO_OPTIONS.into()),
+        UploadError::Rejected(message) => (StatusCode::UNPROCESSABLE_ENTITY, message.clone()),
         UploadError::NoFile => (
             StatusCode::UNPROCESSABLE_ENTITY,
             "Escolha um arquivo para enviar.".into(),
@@ -258,43 +329,57 @@ async fn receive(
     multipart: &mut Multipart,
     received: &mut Vec<Job>,
 ) -> Result<(), UploadError> {
-    let (mut transcribe, mut compress) = (false, false);
     while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|_| UploadError::Interrupted)?
     {
-        match field.name().unwrap_or_default() {
-            "transcrever" => transcribe = true,
-            "compactar" => compress = true,
-            "arquivo" => {
-                // Input sem arquivo escolhido manda um campo com nome vazio.
-                let Some(name) = field.file_name().and_then(display_name) else {
-                    continue;
-                };
-                let (media, ext) = Media::detect(&name).ok_or(UploadError::Format)?;
-                // No formulário, as opções vêm antes do arquivo: recusa antes de gravar.
-                let options = Options::new(transcribe, compress).ok_or(UploadError::NoOptions)?;
-                let id = JobId::generate();
-                let input = jobs.upload_path(id, ext);
-                let size = save(&mut field, &input).await?;
-                received.push(Job {
-                    id,
-                    name,
-                    media,
-                    size,
-                    options,
-                    input,
-                    state: JobState::Queued,
-                });
-            }
-            _ => {}
+        if field.name() != Some("arquivo") {
+            continue;
         }
+        // Input sem arquivo escolhido manda um campo com nome vazio.
+        let Some(name) = field.file_name().and_then(display_name) else {
+            continue;
+        };
+        // A extensão é o primeiro filtro: recusa antes de gravar.
+        let (_, ext) = Media::detect(&name).ok_or(UploadError::Format)?;
+        let id = JobId::generate();
+        let created = LocalTime::now();
+        let input = jobs.upload_path(id, ext);
+        let size = save(&mut field, &input).await?;
+        let probe = match probe(jobs, &name, &input).await {
+            Ok(probe) => probe,
+            Err(message) => {
+                let _ = tokio::fs::remove_file(&input).await;
+                return Err(UploadError::Rejected(message));
+            }
+        };
+        received.push(Job {
+            id,
+            name,
+            media: probe.media,
+            size,
+            duration_ms: probe.duration_ms,
+            created,
+            estimate: probe.estimate,
+            input,
+            state: JobState::Queued,
+        });
     }
     if received.is_empty() {
         return Err(UploadError::NoFile);
     }
     Ok(())
+}
+
+/// O probe do pipeline numa thread de bloqueio; o erro é a mensagem para a tela.
+async fn probe(jobs: &Jobs, name: &str, input: &FsPath) -> Result<Probe, String> {
+    let (jobs, name, input) = (jobs.clone(), name.to_string(), input.to_path_buf());
+    match tokio::task::spawn_blocking(move || jobs.probe(&name, &input)).await {
+        Ok(Ok(probe)) => Ok(probe),
+        Ok(Err(Failure::Error(message))) => Err(message),
+        Ok(Err(Failure::Canceled)) | Err(_) => Err(PANIC_MESSAGE.into()),
+    }
 }
 
 /// Grava o campo em pedaços, sem juntar o arquivo na memória.
@@ -337,6 +422,37 @@ impl Drop for Partial {
 fn display_name(raw: &str) -> Option<String> {
     let name = raw.rsplit(['/', '\\']).next().unwrap_or(raw).trim();
     (!name.is_empty()).then(|| name.to_string())
+}
+
+/// Duração para o card: "45 s", "12 min", "1 h 05 min" (ao minuto mais próximo); `None`
+/// quando desconhecida.
+pub fn format_duration(ms: u64) -> Option<String> {
+    if ms == 0 {
+        return None;
+    }
+    let secs = (ms + 500) / 1_000;
+    if secs < 60 {
+        return Some(format!("{secs} s"));
+    }
+    Some(hours_minutes((secs + 30) / 60))
+}
+
+fn hours_minutes(minutes: u64) -> String {
+    if minutes < 60 {
+        format!("{minutes} min")
+    } else {
+        format!("{} h {:02} min", minutes / 60, minutes % 60)
+    }
+}
+
+/// "Cerca de 4 min na GPU", "Menos de 1 min no processador": arredonda para cima.
+pub fn format_estimate(e: Estimate) -> String {
+    let place = if e.gpu { "na GPU" } else { "no processador" };
+    if e.secs < 60 {
+        format!("Menos de 1 min {place}")
+    } else {
+        format!("Cerca de {} {place}", hours_minutes(e.secs.div_ceil(60)))
+    }
 }
 
 /// Tamanho em unidades binárias, com vírgula decimal: "1,5 KB", "312 MB".
@@ -387,6 +503,31 @@ mod tests {
     }
 
     #[test]
+    fn duracao_legivel() {
+        assert_eq!(format_duration(0), None);
+        assert_eq!(format_duration(10_931).as_deref(), Some("11 s"));
+        assert_eq!(format_duration(59_400).as_deref(), Some("59 s"));
+        assert_eq!(format_duration(89_000).as_deref(), Some("1 min"));
+        assert_eq!(format_duration(90_000).as_deref(), Some("2 min"));
+        assert_eq!(format_duration(3_570_000).as_deref(), Some("1 h 00 min"));
+        assert_eq!(
+            format_duration(2 * 3_600_000 + 5 * 60_000).as_deref(),
+            Some("2 h 05 min")
+        );
+    }
+
+    #[test]
+    fn estimativa_legivel() {
+        let e = |secs, gpu| format_estimate(Estimate { secs, gpu });
+        assert_eq!(e(0, true), "Menos de 1 min na GPU");
+        assert_eq!(e(59, false), "Menos de 1 min no processador");
+        assert_eq!(e(60, true), "Cerca de 1 min na GPU");
+        assert_eq!(e(201, true), "Cerca de 4 min na GPU");
+        assert_eq!(e(380, false), "Cerca de 7 min no processador");
+        assert_eq!(e(4_000, false), "Cerca de 1 h 07 min no processador");
+    }
+
+    #[test]
     fn tamanho_legivel() {
         assert_eq!(format_size(512), "512 B");
         assert_eq!(format_size(1536), "1,5 KB");
@@ -402,7 +543,20 @@ mod tests {
             name: "Reunião <equipe>.mp4".into(),
             media: Media::Video,
             size: 312 * 1024 * 1024,
-            options: Options::new(true, false).unwrap(),
+            duration_ms: 47 * 60_000 + 12_000,
+            created: LocalTime {
+                year: 2026,
+                month: 10,
+                day: 20,
+                hour: 14,
+                minute: 30,
+                second: 5,
+                offset_minutes: -180,
+            },
+            estimate: Some(Estimate {
+                secs: 74,
+                gpu: true,
+            }),
             input: "nada".into(),
             state,
         }
@@ -425,7 +579,15 @@ mod tests {
             ("na_fila", JobState::Queued),
             ("rodando", running(false)),
             ("cancelando", running(true)),
-            ("concluido", JobState::Done { outputs: vec![] }),
+            (
+                "concluido",
+                JobState::Done {
+                    outputs: crate::jobs::Outputs {
+                        dir: "saidas/2026-10-20 1430 - Reunião equipe".into(),
+                        ..Default::default()
+                    },
+                },
+            ),
             (
                 "falhou",
                 JobState::Failed {

@@ -2,7 +2,7 @@
 
 App local para Windows, distribuído como um único `.exe`, que **grava** (microfone + som do PC) e **transcreve tudo o que foi falado** em vídeos, áudios e gravações, entregando o **texto**. A mídia é descartada depois, salvo se o usuário pedir para guardar o áudio. Este documento reúne as decisões de produto e de arquitetura, as fases de desenvolvimento com checklists, a política de testes, os riscos e o registro de decisões.
 
-Última atualização: 2026-10-19.
+Última atualização: 2026-10-20.
 
 ## Status das fases
 
@@ -316,18 +316,18 @@ O plano da fase a divide em seis etapas, cada uma com o próprio PR: 4.1 whisper
   - Idioma `pt`, VAD Silero e `no_context`.
   - Threads = núcleos − 2, salvo se a investigação da CPU mostrar uma regra melhor.
   - Progresso, cancelamento e filtro de frases-fantasma.
-- [ ] Escolha do backend (4.3: escolha e benchmark prontos; falta a UI, na 4.4/4.5) (achado do spike A: só CPU com o modelo grande leva ~8 h para 1 h de áudio):
+- [x] Escolha do backend (4.3: escolha e benchmark; 4.4: backend no rodapé e estimativa no card) (achado do spike A: só CPU com o modelo grande leva ~8 h para 1 h de áudio):
   - Usar a GPU **dedicada** quando houver, e não o dispositivo Vulkan 0, que costuma ser a integrada. Sem dedicada, a CPU: a integrada ficou de fora porque, no benchmark da 4.3, foi mais lenta que a CPU com todos os modelos.
   - Sem GPU dedicada, transcrever na CPU com um **modelo menor embutido**: o `small` (benchmark da 4.3: 8,7% de WER contra 15,9% do `base`, RTF 0,105). O custo é o exe crescer ~190 MB.
   - Antes de fechar o fallback, investigar a lentidão da CPU (~87 s para 10,9 s), comparando com o whisper.cpp oficial e testando threads e OpenMP. No planejamento, a leitura do `CMakeCache.txt` mostrou que o whisper.cpp do release compila sem `/O2` (veja o Registro de decisões).
   - Mostrar na UI qual backend está em uso e uma estimativa de tempo antes de começar.
 - [x] `transcript`: parágrafos (pausa > 1,5 s quebra), `[hh:mm:ss]` em cada parágrafo e cabeçalho (origem, data, duração). Gera `transcricao.txt`, `transcricao.md` e `job.json`.
-- [ ] Fluxo automático: o envio deixa de ter as opções "Transcrever" e "Compactar". Todo job extrai o áudio e transcreve; a pergunta "Guardar o áudio?" entra na Fase 5.
+- [x] Fluxo automático: o envio deixa de ter as opções "Transcrever" e "Compactar". Todo job extrai o áudio e transcreve; a pergunta "Guardar o áudio?" entra na Fase 5.
 - [ ] UI: leitor da transcrição, Copiar texto, Baixar .txt, Baixar .md e Abrir pasta.
-- [ ] Herdado da Fase 3:
+- [x] Herdado da Fase 3 (etapa 4.4):
   - O pipeline real substitui o falso no app; o falso vai para a feature `test-support`, com a flag `--fake-pipeline` para o E2E.
   - "Tentar de novo" no job que falhou (o envio fica guardado até a nova tentativa).
-  - Remover um job que tem saídas passa pelo `confirm-dialog`.
+  - Remover um job que tem saídas passa pelo `confirm-dialog`, e a pasta vai para a Lixeira.
   - Card com duração e data (probe do FFmpeg e hora local, a mesma da pasta `AAAA-MM-DD HHmm`).
 
 **Testes:**
@@ -553,6 +553,12 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-19 | Fase 4 | Modelo da CPU: `small` (`CPU_MODEL`). Metade do erro do `base` por ~2,3× o tempo, e 1 h de áudio em ~6,3 min, bem dentro da meta de ≤ 1 h. O large na CPU (6,6%) custaria 3,3× o tempo e 1,2 GB de RAM | Benchmark acima; mantém a política da Fase 0 (modelo menor embutido) |
 | 2026-10-19 | Fase 4 | Revê a política de backend da Fase 0: a GPU integrada sai da lista, que fica "GPU dedicada (mais memória primeiro) → CPU com o `small`". A Intel foi mais lenta que a CPU com todos os modelos e, com o large, teve WER pior (9,0% contra 6,6%) | Benchmark acima |
 | 2026-10-19 | Fase 4 | Versões: `whisper-rs` com a feature `raw-api` (registro de dispositivos do ggml, VAD da memória e log); feature `vulkan` no `scriba` (`whisper-rs/vulkan`); `windows-sys` com `Win32_System_Threading`. O cache de modelos do CI passa a ter o base q5_1 e o Silero v6.2.0 | Reprodutibilidade |
+| 2026-10-20 | Fase 4 | Etapa 4.4: o `Engine` (`src/engine.rs`: `media` → `asr` → `transcript`) é o pipeline do app, com a detecção de GPU síncrona na criação. O trait `Pipeline` ganha `probe` e `backend`; `Outputs` vira `{ dir, txt, md }`; o `Job` perde `options` e ganha `duration_ms`, `created` (a hora da pasta) e `estimate`. Sai o `Stage::Compressing`. O tipo de mídia passa a vir do probe (um MP4 só com áudio é áudio); a extensão continua como primeiro filtro | Sem caixinhas, todo job extrai o áudio e transcreve; o `Ctx` não precisou de handles `'static` (trampolins da 4.3) |
+| 2026-10-20 | Fase 4 | Estimativa no card da fila: duração do probe × RTF do benchmark da 4.3 (GPU: base 0,016, small 0,020, large 0,026; CPU: 0,046, 0,105, 0,350), + 1,2 s se o modelo não está carregado, + 9 s no 1º uso do Vulkan no processo; a extração fica de fora até a 4.6 medir. Texto: "Cerca de N min na GPU" / "Menos de 1 min no processador"; o rodapé diz "Transcrição na GPU: <placa>" ou "Transcrição no processador" (o candidato que carregou, ou o 1º antes da carga). Na RTX, `fala.mp4` (13,7 s): estimativa de 11 s e o teste de ponta a ponta em 16,3 s com a compilação dos shaders | "Processador" no lugar de "CPU" para quem não é técnico |
+| 2026-10-20 | Fase 4 | "Tentar de novo": `Event::Retry` (Falhou → Na fila), `POST /api/jobs/{id}/retry`. O envio fica em `uploads/` quando o job falha (inclusive por panic) e é apagado ao concluir, ao cancelar e ao remover; a nova tentativa ganha outra flag de cancelamento, e cancelar um job já terminado não apaga o envio | Proptest com o `Retry`; `tests/jobs.rs` |
+| 2026-10-20 | Fase 4 | Remover um job concluído: `DELETE /api/jobs/{id}` exige `?confirm=1` (409 sem) e manda a pasta da saída para a Lixeira (`SHFileOperationW` com `FOF_ALLOWUNDO`, `src/trash.rs`); pasta já apagada fora do app não impede. Na tela, `hx-confirm` abre o `confirm-dialog` (`<dialog>` modal pelo `htmx:confirm`) com o foco em "Cancelar". O `confirm-dialog`, o "Tentar de novo" e os `btn-secondary`/`btn-danger` foram antecipados da 4.5 | Itens herdados da Fase 3 no escopo da 4.4. Custo aceito: os testes da Lixeira deixam pastas pequenas na Lixeira da máquina |
+| 2026-10-20 | Fase 4 | Feature `test-support`: o `FakePipeline` (grava uma transcrição fixa com o `transcript` real; ganchos novos `sem-audio` e `falha-uma-vez`) e a flag `--fake-pipeline`. O `tests/upload.rs` tem `required-features`; o CI passa `scriba/test-support` no clippy, nos testes e no build do E2E. O `--self-test` usa `media` e `asr` (sem o whisper duplicado), e o `embedded-test-model` embute também o VAD (+0,9 MB); o `hound` sai das dependências do `scriba` | O probe real recusaria os bytes falsos do E2E e do upload |
+| 2026-10-20 | Fase 4 | `windows-sys` com `Win32_UI_Shell` (Lixeira). Referências visuais do E2E regeradas (dropzone sem caixinhas, rodapé, metadados), com a data do card mascarada | Reprodutibilidade |
 
 ## Referências verificadas
 

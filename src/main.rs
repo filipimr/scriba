@@ -6,7 +6,7 @@ use scriba::app::{self, Options};
 use scriba::config::Paths;
 
 #[derive(Parser)]
-#[command(version, about = "Grava, compacta e transcreve")]
+#[command(version, about = "Grava e transcreve")]
 struct Cli {
     /// Transcreve uma amostra embutida em CPU e codifica um clipe curto com x264.
     #[arg(long)]
@@ -27,6 +27,11 @@ struct Cli {
     /// Pasta das saídas (padrão: Documentos\Scriba).
     #[arg(long)]
     output_dir: Option<PathBuf>,
+
+    /// Usa o pipeline falso, que não lê o arquivo (testes E2E).
+    #[cfg(feature = "test-support")]
+    #[arg(long)]
+    fake_pipeline: bool,
 }
 
 fn main() -> ExitCode {
@@ -47,6 +52,8 @@ fn main() -> ExitCode {
         port: cli.port,
         open_browser: !cli.no_open,
         paths: Paths::resolve(cli.data_dir, cli.output_dir),
+        #[cfg(feature = "test-support")]
+        fake_pipeline: cli.fake_pipeline,
     };
     match app::run(opts) {
         Ok(()) => ExitCode::SUCCESS,

@@ -6,14 +6,18 @@ use std::sync::Arc;
 use anyhow::Context;
 
 use crate::config::Paths;
+use crate::engine::Engine;
 use crate::instance::Instance;
-use crate::jobs::{FakePipeline, Jobs};
+use crate::jobs::{Jobs, Pipeline};
 use crate::web::{self, AppState, SHUTDOWN_GRACE};
 
 pub struct Options {
     pub port: u16,
     pub open_browser: bool,
     pub paths: Paths,
+    /// O pipeline falso no lugar do real (E2E).
+    #[cfg(feature = "test-support")]
+    pub fake_pipeline: bool,
 }
 
 /// Sobe o servidor e bloqueia até Ctrl+C. Se outra instância já responde, só reabre o
@@ -34,8 +38,7 @@ pub fn run(opts: Options) -> anyhow::Result<()> {
 
     let listener = web::bind(opts.port).context("abrindo a porta local")?;
     // Só depois de confirmar que esta é a única instância: a fila esvazia `uploads/`.
-    // Até a Fase 4, o pipeline é o falso.
-    let (jobs, worker) = Jobs::start(opts.paths.uploads_dir(), Arc::new(FakePipeline::default()))
+    let (jobs, worker) = Jobs::start(opts.paths.uploads_dir(), pipeline(&opts))
         .context("preparando a pasta de uploads")?;
     let instance = Instance::new(listener.local_addr()?.port());
     instance.write(&file)?;
@@ -62,6 +65,16 @@ pub fn run(opts: Options) -> anyhow::Result<()> {
     }
     instance.remove(&file);
     result.context("servidor")
+}
+
+/// O `Engine` detecta as GPUs agora, antes de o servidor responder.
+fn pipeline(opts: &Options) -> Arc<dyn Pipeline> {
+    let output_dir = opts.paths.output_dir.clone();
+    #[cfg(feature = "test-support")]
+    if opts.fake_pipeline {
+        return Arc::new(crate::jobs::FakePipeline::new(output_dir));
+    }
+    Arc::new(Engine::new(output_dir))
 }
 
 fn announce(prefix: &str, url: &str, open_browser: bool) {

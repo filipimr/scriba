@@ -4,8 +4,9 @@
 use std::path::PathBuf;
 
 use super::id::JobId;
+use crate::clock::LocalTime;
 
-/// Formatos aceitos no envio, conferidos pela extensão até o probe do FFmpeg (Fase 4).
+/// Formatos aceitos no envio: o primeiro filtro, pela extensão, antes do probe.
 pub const FORMATS: &[(&str, Media)] = &[
     ("mp4", Media::Video),
     ("mov", Media::Video),
@@ -37,40 +38,11 @@ impl Media {
     }
 }
 
-/// O que fazer com o arquivo: transcrever, compactar ou os dois.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Options {
-    transcribe: bool,
-    compress: bool,
-}
-
-impl Options {
-    /// `None` sem nenhuma das duas: todo job tem pelo menos uma etapa.
-    pub fn new(transcribe: bool, compress: bool) -> Option<Self> {
-        (transcribe || compress).then_some(Self {
-            transcribe,
-            compress,
-        })
-    }
-
-    /// Etapas do pipeline, em ordem.
-    pub fn stages(self) -> Vec<Stage> {
-        let mut stages = Vec::new();
-        if self.transcribe {
-            stages.extend([Stage::ExtractingAudio, Stage::Transcribing]);
-        }
-        if self.compress {
-            stages.push(Stage::Compressing);
-        }
-        stages
-    }
-}
-
+/// As etapas do pipeline, em ordem: todo job extrai o áudio e transcreve.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
     ExtractingAudio,
     Transcribing,
-    Compressing,
 }
 
 impl Stage {
@@ -78,13 +50,34 @@ impl Stage {
         match self {
             Self::ExtractingAudio => "Extraindo áudio",
             Self::Transcribing => "Transcrevendo",
-            Self::Compressing => "Compactando",
         }
     }
 }
 
-/// Arquivos gerados pelo job (vazio até a Fase 4).
-pub type Outputs = Vec<PathBuf>;
+/// O que o probe do envio descobriu sobre o arquivo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Probe {
+    /// Pelo conteúdo: um MP4 só com áudio é áudio.
+    pub media: Media,
+    /// 0 quando o arquivo não informa.
+    pub duration_ms: u64,
+    pub estimate: Option<Estimate>,
+}
+
+/// Quanto a transcrição deve levar, e onde.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Estimate {
+    pub secs: u64,
+    pub gpu: bool,
+}
+
+/// A pasta da saída e os arquivos da transcrição dentro dela.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Outputs {
+    pub dir: PathBuf,
+    pub txt: PathBuf,
+    pub md: PathBuf,
+}
 
 /// Por que o pipeline não terminou.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -121,6 +114,8 @@ pub enum Event {
     Cancel,
     Finished(Result<Outputs, Failure>),
     Panicked,
+    /// "Tentar de novo" num job que falhou: volta para a fila.
+    Retry,
 }
 
 /// Evento que não vale no estado atual (ex.: começar um job cancelado).
@@ -163,6 +158,7 @@ impl State {
             (Running { .. }, Event::Panicked) => Ok(Failed {
                 message: PANIC_MESSAGE.into(),
             }),
+            (Failed { .. }, Event::Retry) => Ok(Queued),
             // Cancelar o que já terminou não muda nada.
             (Done { .. } | Failed { .. } | Canceled, Event::Cancel) => Ok(self.clone()),
             _ => Err(Invalid),
@@ -177,7 +173,7 @@ impl State {
     }
 }
 
-/// Um arquivo enviado e o que fazer com ele.
+/// Um arquivo enviado.
 #[derive(Clone, Debug)]
 pub struct Job {
     pub id: JobId,
@@ -185,8 +181,13 @@ pub struct Job {
     pub name: String,
     pub media: Media,
     pub size: u64,
-    pub options: Options,
-    /// Cópia enviada, em `uploads/`; apagada quando o job termina ou é removido.
+    /// Do probe; 0 quando o arquivo não informa.
+    pub duration_ms: u64,
+    /// Hora local do envio, a mesma do nome da pasta da saída.
+    pub created: LocalTime,
+    pub estimate: Option<Estimate>,
+    /// Cópia enviada, em `uploads/`. Apagada quando o job conclui, é cancelado ou é
+    /// removido; num job que falhou, fica para o "Tentar de novo".
     pub input: PathBuf,
     pub state: State,
 }
@@ -202,6 +203,12 @@ mod tests {
             stage: Stage::Transcribing,
             pct: 40,
             canceling,
+        }
+    }
+
+    fn done() -> State {
+        State::Done {
+            outputs: Outputs::default(),
         }
     }
 
@@ -224,8 +231,8 @@ mod tests {
             // Terminou antes de ver a flag: o resultado vale.
             (
                 running(true),
-                Event::Finished(Ok(vec![])),
-                State::Done { outputs: vec![] },
+                Event::Finished(Ok(Outputs::default())),
+                done(),
             ),
             (
                 running(true),
@@ -252,11 +259,7 @@ mod tests {
                     message: PANIC_MESSAGE.into(),
                 },
             ),
-            (
-                State::Done { outputs: vec![] },
-                Event::Cancel,
-                State::Done { outputs: vec![] },
-            ),
+            (done(), Event::Cancel, done()),
             (State::Canceled, Event::Cancel, State::Canceled),
         ];
         for (state, event, expected) in cases {
@@ -271,12 +274,12 @@ mod tests {
     #[test]
     fn progresso_limita_a_100() {
         let s = running(false)
-            .apply(Event::Progress(Stage::Compressing, 250))
+            .apply(Event::Progress(Stage::ExtractingAudio, 250))
             .unwrap();
         assert_eq!(
             s,
             State::Running {
-                stage: Stage::Compressing,
+                stage: Stage::ExtractingAudio,
                 pct: 100,
                 canceling: false
             }
@@ -284,16 +287,17 @@ mod tests {
     }
 
     #[test]
-    fn opcoes_definem_as_etapas() {
-        use Stage::{Compressing, ExtractingAudio, Transcribing};
-        assert_eq!(Options::new(false, false), None);
-        let stages = |t, c| Options::new(t, c).unwrap().stages();
-        assert_eq!(stages(true, false), [ExtractingAudio, Transcribing]);
-        assert_eq!(stages(false, true), [Compressing]);
-        assert_eq!(
-            stages(true, true),
-            [ExtractingAudio, Transcribing, Compressing]
-        );
+    fn tentar_de_novo_so_vale_em_falhou() {
+        for state in [State::Queued, running(false), done(), State::Canceled] {
+            assert_eq!(state.apply(Event::Retry), Err(Invalid), "{state:?}");
+        }
+        let again = State::Failed {
+            message: "x".into(),
+        }
+        .apply(Event::Retry)
+        .unwrap();
+        assert_eq!(again, State::Queued);
+        assert!(again.apply(Event::Start(Stage::ExtractingAudio)).is_ok());
     }
 
     #[test]
@@ -306,11 +310,7 @@ mod tests {
     }
 
     fn stage() -> impl Strategy<Value = Stage> {
-        prop_oneof![
-            Just(Stage::ExtractingAudio),
-            Just(Stage::Transcribing),
-            Just(Stage::Compressing),
-        ]
+        prop_oneof![Just(Stage::ExtractingAudio), Just(Stage::Transcribing)]
     }
 
     fn event() -> impl Strategy<Value = Event> {
@@ -318,10 +318,11 @@ mod tests {
             stage().prop_map(Event::Start),
             (stage(), any::<u8>()).prop_map(|(s, p)| Event::Progress(s, p)),
             Just(Event::Cancel),
-            Just(Event::Finished(Ok(Vec::new()))),
+            Just(Event::Finished(Ok(Outputs::default()))),
             Just(Event::Finished(Err(Failure::Canceled))),
             "[a-z]{1,8}".prop_map(|m| Event::Finished(Err(Failure::Error(m)))),
             Just(Event::Panicked),
+            Just(Event::Retry),
         ]
     }
 
@@ -338,8 +339,12 @@ mod tests {
                 if let Ok(next) = before.apply(event.clone()) {
                     state = next;
                 }
-                // Estado final é absorvente.
-                if before.is_terminal() {
+                // Estado final é absorvente, exceto "Tentar de novo" num job que falhou, que
+                // volta para a fila.
+                let retried = matches!(before, State::Failed { .. }) && event == Event::Retry;
+                if retried {
+                    prop_assert_eq!(&state, &State::Queued);
+                } else if before.is_terminal() || event == Event::Retry {
                     prop_assert_eq!(&state, &before);
                 }
                 // Só começa quem estava na fila.

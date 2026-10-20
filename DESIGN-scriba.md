@@ -1,7 +1,7 @@
 ---
 version: 1.0
 name: scriba
-description: Design system do Scriba, app local que grava, compacta e transcreve. Linguagem herdada da Apple — UI que recua, um único acento azul para tudo que é clicável, pílulas como gramática de ação, títulos com tracking negativo — aplicada a um utilitário de trabalho com marca monocromática em traço fino.
+description: Design system do Scriba, app local que grava e transcreve. Linguagem herdada da Apple — UI que recua, um único acento azul para tudo que é clicável, pílulas como gramática de ação, títulos com tracking negativo — aplicada a um utilitário de trabalho com marca monocromática em traço fino.
 
 colors:
   brand-ink: "#000000"
@@ -566,24 +566,24 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 ### Arquivos e jobs
 
-**`dropzone`** — Área de soltar arquivos: fundo `{colors.canvas}`, borda tracejada de 1,5 px em `{colors.hairline}`, `{rounded.lg}`, padding 48 px. Centro: ícone de upload (24 px), chamada "Solte um vídeo ou áudio aqui" em `{typography.headline}`, linha "ou" e `{component.button-primary}` "Escolher arquivo". Abaixo, as `{component.option-toggle}` "Transcrever" e "Compactar".
+**`dropzone`** — Área de soltar arquivos: fundo `{colors.canvas}`, borda tracejada de 1,5 px em `{colors.hairline}`, `{rounded.lg}`, padding 48 px. Centro: ícone de upload (24 px), chamada "Solte um vídeo ou áudio aqui" em `{typography.headline}`, linha "ou" e `{component.button-primary}` "Escolher arquivo". Sem opções: todo arquivo extrai o áudio e transcreve.
 
 - **Arrastando:** `{component.dropzone-dragover}` — fundo pearl, borda sólida em `{colors.primary}`, texto azul.
 - **Enviando:** a chamada dá lugar ao nome do arquivo e a uma `{component.progress-bar}` do upload.
 - **Erro:** `{component.alert-inline}` logo abaixo ("Formato não suportado. Use MP4, MOV, MKV, MP3, M4A, WAV ou OGG.").
 
-**`option-toggle`** — Opção ligável em formato de pílula (um checkbox): fundo branco, borda de 1 px `{colors.hairline}`, `{typography.callout}`. Selecionada (`{component.option-toggle-selected}`): borda de 2 px e ícone de check à esquerda, ambos em `{colors.primary}`. Sem seleção, não há check: a borda fina e a ausência do ícone marcam o estado sem depender só de cor.
+**`option-toggle`** — Opção ligável em formato de pílula (um checkbox): fundo branco, borda de 1 px `{colors.hairline}`, `{typography.callout}`. Selecionada (`{component.option-toggle-selected}`): borda de 2 px e ícone de check à esquerda, ambos em `{colors.primary}`. Sem seleção, não há check: a borda fina e a ausência do ícone marcam o estado sem depender só de cor. Desde a etapa 4.4 nenhuma tela o usa (a dropzone perdeu "Transcrever" e "Compactar"); fica no sistema para ajustes futuros.
 
 **`job-card`** — Um job na lista "Recentes": fundo branco, borda hairline, `{rounded.lg}`, padding 24 px.
 
 - Linha 1: ícone do tipo (vídeo, áudio, gravação), nome em `{typography.body-strong}` (truncado com reticências quando não cabe) e `{component.status-badge}` à direita.
-- Linha 2: metadados em `{typography.caption}` `{colors.ink-secondary}` (duração · tamanho · data).
+- Linha 2: metadados em `{typography.caption}` `{colors.ink-secondary}` (duração · tamanho · data: "47 min · 312 MB · 20/10/2026 14:30"). Sem a duração no arquivo, só tamanho e data.
 - À direita do card, um único `{component.button-icon}` de ação, que mantém o foco do teclado quando o card se atualiza.
-- Na fila: só o badge e o botão de cancelar.
+- Na fila: o badge, o botão de cancelar e, abaixo dos metadados, a estimativa no mesmo estilo: "Cerca de 4 min na GPU", "Menos de 1 min no processador".
 - Ativo: etapa atual ("Transcrevendo… 42%") e `{component.progress-bar}`, com o botão de cancelar. Depois do pedido, a etapa vira "Cancelando…" e o botão fica inativo até o pipeline parar.
-- Concluído: `{component.button-primary}` "Ver transcrição", `{component.button-secondary}` "Baixar .txt", `{component.button-utility}` "Abrir pasta". Se houve compactação, "312 MB → 48 MB (−85%)".
-- Falhou: mensagem em `{component.alert-inline}` e "Tentar de novo".
-- Concluído, Falhou ou Cancelado: o botão de ação vira "Remover" (lixeira), que tira o job da lista. Enquanto remover só apaga a cópia temporária do envio, não há confirmação; quando também apagar as saídas, passa pelo `{component.confirm-dialog}`.
+- Concluído: `{component.button-primary}` "Ver transcrição", `{component.button-secondary}` "Baixar .txt", `{component.button-utility}` "Abrir pasta".
+- Falhou: mensagem em `{component.alert-inline}` e, logo abaixo, `{component.button-secondary}` "Tentar de novo", que devolve o job à fila com o mesmo arquivo.
+- Concluído, Falhou ou Cancelado: o botão de ação vira "Remover" (lixeira), que tira o job da lista. Em Falhou e Cancelado, remover só apaga a cópia temporária do envio e não pede confirmação; em Concluído, a pasta da transcrição vai para a Lixeira, depois do `{component.confirm-dialog}`.
 
 **`progress-bar`** — Trilho de 4 px em `{colors.divider-soft}`, preenchimento `{colors.primary}`, pílula. É o elemento nativo `<progress>`, que já expõe o papel `progressbar` e o valor; a política de segurança do app (CSP) bloqueia a largura por `style` inline.
 
@@ -623,11 +623,15 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 **`toast`** — Confirmação passageira no rodapé central: fundo `{colors.surface-dark}`, texto branco, `{rounded.md}`, `{elevation.floating}`. Some após 3 s. Anunciado com `aria-live="polite"`.
 
-**`confirm-dialog`** — Só para ações destrutivas (excluir job e arquivos). Fundo branco, `{rounded.lg}`, padding 32 px, `{elevation.floating}`, sobre um véu preto a 40%. Título em `{typography.headline}`, texto explicando o que será apagado, `{component.button-secondary}` "Cancelar" e `{component.button-danger}` "Excluir". Foco preso no diálogo; Esc cancela.
+**`confirm-dialog`** — Só para ações destrutivas (excluir job e arquivos). Fundo branco, `{rounded.lg}`, padding 32 px, `{elevation.floating}`, sobre um véu preto a 40%, com até 440 px de largura. Título em `{typography.headline}`, texto explicando o que será apagado, `{component.button-secondary}` "Cancelar" e `{component.button-danger}` "Excluir", alinhados à direita. Remover um job concluído: "Excluir a transcrição?" / "A pasta “2026-10-19 1430 - Reunião” vai para a Lixeira.".
+
+- Abre com o foco em "Cancelar", a escolha segura.
+- Foco preso no diálogo (`<dialog>` modal); Esc cancela.
+- Ao fechar, o foco volta ao botão que abriu o diálogo.
 
 **`empty-state`** — Lista "Recentes" sem itens: ícone de 24 px e texto em `{typography.callout}` `{colors.ink-secondary}` ("Nada por aqui ainda. Grave uma reunião ou envie um arquivo."), padding 64 px.
 
-**`footer`** — Parchment, `{typography.footnote}` em `{colors.ink-secondary}`: versão do app, "Funciona offline · nada sai do seu computador", e link para a pasta de saídas.
+**`footer`** — Parchment, `{typography.footnote}` em `{colors.ink-secondary}`: versão do app e onde a transcrição roda ("Scriba 0.1.0 · Transcrição na GPU: NVIDIA GeForce RTX 3050" ou "· Transcrição no processador"), "Funciona offline · nada sai do seu computador", e link para a pasta de saídas.
 
 ## Acessibilidade
 
@@ -641,8 +645,9 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 ## Voz e microcopy
 
 - Português do Brasil, frases curtas, tratamento por "você".
-- Botões com verbos diretos: "Gravar", "Parar", "Escolher arquivo", "Copiar texto", "Baixar .txt", "Abrir pasta", "Tentar de novo".
-- Etapas no gerúndio: "Na fila", "Extraindo áudio…", "Transcrevendo… 42%", "Compactando… 73%", "Cancelando…".
+- Botões com verbos diretos: "Gravar", "Parar", "Escolher arquivo", "Copiar texto", "Baixar .txt", "Abrir pasta", "Tentar de novo", "Excluir".
+- Etapas no gerúndio: "Na fila", "Extraindo áudio…", "Transcrevendo… 42%", "Cancelando…".
+- Estimativas arredondadas e sem falsa precisão: "Cerca de 4 min na GPU", "Menos de 1 min no processador". "Processador" no lugar de "CPU".
 - Erros dizem o que aconteceu e o que fazer: "Este arquivo não tem áudio. Escolha um vídeo com som." — nunca códigos ou jargão técnico.
 - Sem exclamações, sem emojis.
 
@@ -684,3 +689,4 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 - **Logo vetorial:** resolvido na Fase 2 (SVGs em `docs/brand/`). Falta o `.ico` do executável e da bandeja, que sai na Fase 7 junto com o ícone da bandeja.
 - **Ilustrações de estado vazio:** a v1 usa apenas ícones Lucide.
 - **Ícone da bandeja do Windows:** precisa de variantes clara e escura, conforme o tema da barra de tarefas.
+- **Card concluído e leitor:** "Ver transcrição", "Baixar .txt", "Baixar .md", "Abrir pasta", o `transcript-view` e o `toast` chegam na etapa 4.5; até lá, o card concluído só tem o Remover. Resolvidos na 4.4: a dropzone sem as caixinhas, o estilo do "Tentar de novo", o backend no rodapé e a estimativa no card, e o texto do `confirm-dialog`.

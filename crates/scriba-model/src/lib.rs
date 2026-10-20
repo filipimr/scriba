@@ -11,16 +11,17 @@ pub const WHISPER: Option<&[u8]> = Some(include_bytes!(concat!(
 #[cfg(not(feature = "embedded-model"))]
 pub const WHISPER: Option<&[u8]> = None;
 
-#[cfg(feature = "embedded-model")]
+/// VAD Silero (~0,9 MB): vai junto com qualquer modelo embutido.
+#[cfg(any(feature = "embedded-model", feature = "embedded-test-model"))]
 pub const VAD: Option<&[u8]> = Some(include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../models/ggml-silero-v6.2.0.bin"
 )));
-#[cfg(not(feature = "embedded-model"))]
+#[cfg(not(any(feature = "embedded-model", feature = "embedded-test-model")))]
 pub const VAD: Option<&[u8]> = None;
 
 /// Modelo `base` q5_1 (~60 MB) e amostra de fala para o `scriba --self-test` da
-/// release, que roda em CPU no runner sem GPU.
+/// release, que roda em CPU no runner sem GPU (com o VAD acima).
 #[cfg(feature = "embedded-test-model")]
 pub const TEST_WHISPER: Option<&[u8]> = Some(include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),

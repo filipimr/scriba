@@ -6,13 +6,22 @@
       <h3 class="job-card-name" title="{{ job.name }}">{{ job.name }}</h3>
       <span class="status-badge{% if !job.badge_variant.is_empty() %} status-badge-{{ job.badge_variant }}{% endif %}">{{ job.badge }}</span>
     </div>
-    <p class="job-card-meta">{{ job.size }}</p>
+    <p class="job-card-meta">{% if let Some(duration) = job.duration %}{{ duration }} · {% endif %}{{ job.size }} · <span class="job-card-date">{{ job.date }}</span></p>
+    {%- if let Some(estimate) = job.estimate %}
+    <p class="job-card-meta">{{ estimate }}</p>
+    {%- endif %}
     {%- if let Some(stage) = job.stage %}
     <p class="job-card-stage">{{ stage }}</p>
     <progress class="progress-bar" max="100" value="{{ job.pct }}" aria-label="Progresso de {{ job.name }}"></progress>
     {%- endif %}
     {%- if let Some(error) = job.error %}
     <p class="alert-inline">{% include "icons/circle-alert.svg" %}<span>{{ error }}</span></p>
+    {%- endif %}
+    {%- if job.retry %}
+    <div class="job-card-actions">
+      <button class="btn btn-secondary" type="button"
+        hx-post="/api/jobs/{{ job.id }}/retry" hx-target="#job-{{ job.id }}" hx-swap="outerHTML" hx-sync="#job-{{ job.id }}:replace">Tentar de novo</button>
+    </div>
     {%- endif %}
   </div>
   {#- O botão de ação mantém o id entre Cancelar e Remover: o htmx devolve o foco a ele. #}
@@ -24,7 +33,8 @@
   </button>
   {%- else %}
   <button id="acao-{{ job.id }}" class="btn-icon" type="button" aria-label="Remover {{ job.name }}" title="Remover"
-    hx-delete="/api/jobs/{{ job.id }}" hx-target="#job-{{ job.id }}" hx-swap="outerHTML" hx-sync="#job-{{ job.id }}:replace">
+    {%- if let Some(folder) = job.folder %} hx-delete="/api/jobs/{{ job.id }}?confirm=1" hx-confirm="A pasta “{{ folder }}” vai para a Lixeira."
+    {%- else %} hx-delete="/api/jobs/{{ job.id }}"{% endif %} hx-target="#job-{{ job.id }}" hx-swap="outerHTML" hx-sync="#job-{{ job.id }}:replace">
     {%- include "icons/trash-2.svg" -%}
   </button>
   {%- endif %}

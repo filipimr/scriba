@@ -8,5 +8,5 @@ publish.workspace = true
 [features]
 # Embute o modelo no binário (só no release; o dev carrega de models/).
 embedded-model = []
-# Modelo base + amostra para o `scriba --self-test` da release.
+# Modelo base + VAD + amostra para o `scriba --self-test` da release.
 embedded-test-model = []

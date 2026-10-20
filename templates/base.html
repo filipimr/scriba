@@ -26,7 +26,7 @@
 
   <footer class="footer">
     <div class="container-page flex flex-wrap justify-between gap-xs">
-      <span>Scriba {{ layout.version }}</span>
+      <span>Scriba {{ layout.version }}{% if let Some(backend) = layout.backend %} · {{ backend }}{% endif %}</span>
       <span>Funciona offline · nada sai do seu computador</span>
     </div>
   </footer>

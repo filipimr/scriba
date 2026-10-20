@@ -34,21 +34,25 @@ export type Scriba = {
   /** URL de entrada, com o token. */
   url: string;
   origin: string;
+  /** Pasta das saídas (`--output-dir`). */
+  outputDir: string;
 };
 
 /**
  * Cada teste ganha o próprio scriba.exe (porta 0, diretório temporário): nenhum estado
- * (tema, jobs) vaza de um teste para outro.
+ * (tema, jobs) vaza de um teste para outro. O exe roda o pipeline falso (`--fake-pipeline`,
+ * build com `--features test-support`), que não lê o arquivo enviado.
  */
 export const test = base.extend<{ scriba: Scriba }>({
   scriba: async ({}, use) => {
     const dataDir = mkdtempSync(join(tmpdir(), "scriba-e2e-"));
-    const child = spawn(exe(), ["--no-open", "--port", "0", "--data-dir", dataDir, "--output-dir", join(dataDir, "saidas")], {
+    const outputDir = join(dataDir, "saidas");
+    const child = spawn(exe(), ["--no-open", "--fake-pipeline", "--port", "0", "--data-dir", dataDir, "--output-dir", outputDir], {
       stdio: ["ignore", "pipe", "inherit"],
     });
     try {
       const url = await announced(child);
-      await use({ url, origin: new URL(url).origin });
+      await use({ url, origin: new URL(url).origin, outputDir });
     } finally {
       if (child.exitCode === null) {
         const exited = once(child, "exit");

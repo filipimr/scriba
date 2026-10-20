@@ -1,6 +1,9 @@
-//! Self-test completo com o modelo base de `models/` (`cargo xtask model --only base`).
+//! Self-test completo com o modelo base e o VAD de `models/`
+//! (`cargo xtask model --only base,silero`).
 
-use std::path::Path;
+use scriba::asr::{BASE_FILE, Source, VAD_FILE};
+
+mod common;
 
 #[test]
 fn self_test_transcreve_e_codifica() {
@@ -10,8 +13,11 @@ fn self_test_transcreve_e_codifica() {
 
 #[test]
 fn self_test_falha_com_audio_sem_fala() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let model = std::fs::read(root.join("models/ggml-base-q5_1.bin")).unwrap();
-    let silence = std::fs::read(root.join("tests/fixtures/silencio.wav")).unwrap();
-    assert!(scriba::self_test::run(&model, &silence).is_err());
+    let model = Source::File(common::models_dir().join(BASE_FILE));
+    let vad = Source::File(common::models_dir().join(VAD_FILE));
+    let silence = std::fs::read(common::fixture("silencio.wav")).unwrap();
+    let Err(err) = scriba::self_test::run(model, vad, &silence) else {
+        panic!("silêncio passou no self-test");
+    };
+    assert!(err.to_string().contains("palavras-chave"), "{err}");
 }

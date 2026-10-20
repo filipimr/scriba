@@ -26,7 +26,8 @@ expression: html
       <h3 class="job-card-name" title="Reunião &#60;equipe&#62;.mp4">Reunião &#60;equipe&#62;.mp4</h3>
       <span class="status-badge">Na fila</span>
     </div>
-    <p class="job-card-meta">312 MB</p>
+    <p class="job-card-meta">47 min · 312 MB · <span class="job-card-date">20/10/2026 14:30</span></p>
+    <p class="job-card-meta">Cerca de 2 min na GPU</p>
   </div>
   <button id="acao-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" class="btn-icon" type="button" aria-label="Cancelar Reunião &#60;equipe&#62;.mp4" title="Cancelar" hx-post="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/cancel" hx-target="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" hx-swap="outerHTML" hx-sync="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0:replace"><!-- @license lucide-static v1.59.0 - ISC -->
 <svg

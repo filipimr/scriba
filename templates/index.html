@@ -10,27 +10,14 @@
     <p id="record-soon" class="record-hint">A gravação chega em breve. Use fone de ouvido para não duplicar falas.</p>
   </section>
 
-  {#- As opções vêm antes do arquivo no formulário: o servidor recusa o envio sem opção
-      antes de gravar o arquivo. #}
   <form id="envio" class="dropzone max-md:p-md" aria-labelledby="drop-title"
         hx-post="/api/jobs" hx-encoding="multipart/form-data" hx-target="#jobs" hx-swap="afterbegin"
-        data-erro-formato="{{ format_error }}" data-erro-opcoes="{{ no_options }}">
+        data-erro-formato="{{ format_error }}">
     {% include "icons/upload.svg" %}
     <div class="dropzone-idle">
       <h2 id="drop-title" class="dropzone-title">Solte um vídeo ou áudio aqui</h2>
       <span class="text-caption">ou</span>
       <label for="arquivo" class="btn btn-primary">Escolher arquivo</label>
-      <fieldset class="flex flex-wrap justify-center gap-xs">
-        <legend class="sr-only">O que fazer com o arquivo</legend>
-        <label class="option-toggle">
-          <input class="sr-only" type="checkbox" name="transcrever" value="1" checked>
-          {%- include "icons/check.svg" %}Transcrever
-        </label>
-        <label class="option-toggle">
-          <input class="sr-only" type="checkbox" name="compactar" value="1">
-          {%- include "icons/check.svg" %}Compactar
-        </label>
-      </fieldset>
       <input id="arquivo" class="sr-only" type="file" name="arquivo" multiple accept="{{ accept }}">
     </div>
     <div class="dropzone-uploading">
@@ -40,6 +27,17 @@
     <div id="erro-envio" class="w-full"></div>
   </form>
 </div>
+{#- O Remover de um job concluído (hx-confirm) abre este diálogo pelo app.js. #}
+<dialog id="confirmar" class="confirm-dialog" aria-labelledby="confirmar-titulo" aria-describedby="confirmar-texto">
+  <form method="dialog">
+    <h2 id="confirmar-titulo" class="text-headline">Excluir a transcrição?</h2>
+    <p id="confirmar-texto" class="confirm-dialog-text"></p>
+    <div class="confirm-dialog-actions">
+      <button class="btn btn-secondary" value="cancelar" autofocus>Cancelar</button>
+      <button class="btn btn-danger" value="excluir">Excluir</button>
+    </div>
+  </form>
+</dialog>
 <template id="modelo-erro"><p class="alert-inline" role="alert">{% include "icons/circle-alert.svg" %}<span></span></p></template>
 
 <section class="recentes mt-xxl" aria-labelledby="recent-title">

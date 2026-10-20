@@ -1,38 +1,82 @@
-//! Pipeline falso da Fase 3: percorre as etapas do job com progresso simulado, para validar
-//! a fila e a UI antes dos motores reais. Ganchos pelo nome do arquivo, para testes e
-//! demonstração: `lento` (10× mais devagar), `falha` (erro na metade da primeira etapa) e
-//! `panico` (panic no mesmo ponto).
+//! Pipeline falso, para os testes e o E2E (`--fake-pipeline`, feature `test-support`):
+//! percorre as etapas com progresso simulado, sem ler o arquivo, e grava uma transcrição fixa
+//! com o módulo `transcript` real. Ganchos pelo nome do arquivo:
+//!
+//! - `lento`: 10× mais devagar;
+//! - `falha`: erro na metade da primeira etapa;
+//! - `falha-uma-vez`: o mesmo erro, só na primeira tentativa do job;
+//! - `panico`: panic no mesmo ponto;
+//! - `sem-audio`: o probe recusa o envio.
 
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
 
-use super::model::{Failure, Job, Outputs};
+use super::id::JobId;
+use super::model::{Estimate, Failure, Job, Media, Outputs, Probe, Stage};
 use super::pipeline::{Ctx, Pipeline};
+use crate::transcript::{Segment, Timings};
 
 /// Passos de 5% por etapa.
 const STEPS: u8 = 20;
 
 pub struct FakePipeline {
     tick: Duration,
+    output_dir: PathBuf,
+    /// Jobs `falha-uma-vez` que já falharam.
+    failed_once: Mutex<HashSet<JobId>>,
 }
 
 impl FakePipeline {
     pub const FAILURE: &'static str = "Não foi possível processar este arquivo (falha simulada).";
+    pub const BACKEND: &'static str = "Transcrição no processador";
+    /// Duração que o probe falso informa: 2 min.
+    pub const DURATION_MS: u64 = 120_000;
+    /// "Cerca de 4 min no processador".
+    pub const ESTIMATE: Estimate = Estimate {
+        secs: 240,
+        gpu: false,
+    };
+    /// O texto da transcrição gravada.
+    pub const SEGMENTS: [(u64, u64, &'static str); 2] = [
+        (0, 4_000, "Bom dia, esta é uma transcrição simulada."),
+        (8_000, 12_000, "O Scriba não ouviu este arquivo."),
+    ];
+
+    /// Grava as saídas em `output_dir`, com ~2 s por etapa.
+    pub fn new(output_dir: PathBuf) -> Self {
+        Self {
+            tick: Duration::from_millis(100),
+            output_dir,
+            failed_once: Mutex::default(),
+        }
+    }
 
     /// `tick` é a pausa entre os passos: cada etapa leva `20 × tick`.
-    pub fn new(tick: Duration) -> Self {
-        Self { tick }
-    }
-}
-
-impl Default for FakePipeline {
-    /// ~2 s por etapa.
-    fn default() -> Self {
-        Self::new(Duration::from_millis(100))
+    pub fn tick(mut self, tick: Duration) -> Self {
+        self.tick = tick;
+        self
     }
 }
 
 impl Pipeline for FakePipeline {
+    fn probe(&self, name: &str, _input: &Path) -> Result<Probe, Failure> {
+        if name.to_lowercase().contains("sem-audio") {
+            return Err(crate::media::Error::NoAudio.into());
+        }
+        Ok(Probe {
+            media: Media::detect(name).map_or(Media::Audio, |(media, _)| media),
+            duration_ms: Self::DURATION_MS,
+            estimate: Some(Self::ESTIMATE),
+        })
+    }
+
+    fn backend(&self) -> Option<String> {
+        Some(Self::BACKEND.into())
+    }
+
     fn run(&self, job: &Job, ctx: &Ctx) -> Result<Outputs, Failure> {
         let name = job.name.to_lowercase();
         let tick = if name.contains("lento") {
@@ -40,7 +84,10 @@ impl Pipeline for FakePipeline {
         } else {
             self.tick
         };
-        for (i, stage) in job.options.stages().into_iter().enumerate() {
+        for (i, stage) in [Stage::ExtractingAudio, Stage::Transcribing]
+            .into_iter()
+            .enumerate()
+        {
             for step in 0..=STEPS {
                 ctx.check()?;
                 let pct = step * (100 / STEPS);
@@ -48,7 +95,17 @@ impl Pipeline for FakePipeline {
                     if name.contains("panico") {
                         panic!("pânico simulado pelo pipeline falso: {}", job.name);
                     }
-                    if name.contains("falha") {
+                    let first_try = || {
+                        self.failed_once
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .insert(job.id)
+                    };
+                    if name.contains("falha-uma-vez") {
+                        if first_try() {
+                            return Err(Failure::Error(Self::FAILURE.into()));
+                        }
+                    } else if name.contains("falha") {
                         return Err(Failure::Error(Self::FAILURE.into()));
                     }
                 }
@@ -58,7 +115,23 @@ impl Pipeline for FakePipeline {
                 }
             }
         }
-        Ok(Vec::new())
+        let segments: Vec<Segment> = Self::SEGMENTS
+            .iter()
+            .map(|&(start_ms, end_ms, text)| Segment {
+                start_ms,
+                end_ms,
+                text: text.into(),
+            })
+            .collect();
+        crate::engine::write_outputs(
+            &self.output_dir,
+            job,
+            job.duration_ms,
+            &segments,
+            "simulado",
+            "nenhum",
+            Timings::default(),
+        )
     }
 }
 
@@ -69,68 +142,112 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::jobs::{JobId, Media, Options, Stage, State};
+    use crate::clock::LocalTime;
+    use crate::jobs::{JobId, Media, State};
 
-    fn job(name: &str, transcribe: bool, compress: bool) -> Job {
+    fn job(name: &str) -> Job {
         Job {
             id: JobId::generate(),
             name: name.into(),
             media: Media::Video,
             size: 1,
-            options: Options::new(transcribe, compress).unwrap(),
+            duration_ms: FakePipeline::DURATION_MS,
+            created: LocalTime::now(),
+            estimate: None,
             input: "nada".into(),
             state: State::Queued,
         }
     }
 
     /// Roda sem pausas e devolve o resultado e o progresso relatado.
-    fn run(job: &Job, canceled: bool) -> (Result<Outputs, Failure>, Vec<(Stage, u8)>) {
+    fn run(
+        pipeline: &FakePipeline,
+        job: &Job,
+        canceled: bool,
+    ) -> (Result<Outputs, Failure>, Vec<(Stage, u8)>) {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();
         let ctx = Ctx::new(Arc::new(AtomicBool::new(canceled)), move |s, p| {
             sink.lock().unwrap().push((s, p));
         });
-        let result = FakePipeline::new(Duration::ZERO).run(job, &ctx);
+        let result = pipeline.run(job, &ctx);
         let seen = seen.lock().unwrap().clone();
         (result, seen)
     }
 
+    fn fake(dir: &tempfile::TempDir) -> FakePipeline {
+        FakePipeline::new(dir.path().into()).tick(Duration::ZERO)
+    }
+
     #[test]
-    fn percorre_as_etapas_das_opcoes() {
-        let (result, seen) = run(&job("reuniao.mp4", true, true), false);
-        assert_eq!(result, Ok(vec![]));
+    fn percorre_as_etapas_e_grava_a_transcricao() {
+        let dir = tempfile::tempdir().unwrap();
+        let (result, seen) = run(&fake(&dir), &job("reuniao.mp4"), false);
+        let outputs = result.unwrap();
         let mut stages: Vec<Stage> = seen.iter().map(|(s, _)| *s).collect();
         stages.dedup();
-        assert_eq!(
-            stages,
-            [
-                Stage::ExtractingAudio,
-                Stage::Transcribing,
-                Stage::Compressing
-            ]
-        );
+        assert_eq!(stages, [Stage::ExtractingAudio, Stage::Transcribing]);
         assert_eq!(seen.first(), Some(&(Stage::ExtractingAudio, 0)));
-        assert_eq!(seen.last(), Some(&(Stage::Compressing, 100)));
+        assert_eq!(seen.last(), Some(&(Stage::Transcribing, 100)));
         assert!(seen.windows(2).all(|w| w[0].0 != w[1].0 || w[0].1 < w[1].1));
+
+        assert!(outputs.dir.starts_with(dir.path()));
+        let txt = std::fs::read_to_string(&outputs.txt).unwrap();
+        assert!(txt.contains("Arquivo: reuniao.mp4"), "{txt}");
+        assert!(txt.contains("[00:00:00] Bom dia"), "{txt}");
+        assert!(txt.contains("[00:00:08] O Scriba"), "{txt}");
+        assert!(outputs.md.is_file());
     }
 
     #[test]
     fn falha_na_metade_da_primeira_etapa() {
-        let (result, seen) = run(&job("Falha.wav", false, true), false);
+        let dir = tempfile::tempdir().unwrap();
+        let (result, seen) = run(&fake(&dir), &job("Falha.wav"), false);
         assert_eq!(result, Err(Failure::Error(FakePipeline::FAILURE.into())));
-        assert_eq!(seen.last(), Some(&(Stage::Compressing, 45)));
+        assert_eq!(seen.last(), Some(&(Stage::ExtractingAudio, 45)));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn falha_uma_vez_passa_na_segunda_tentativa() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipeline = fake(&dir);
+        let j = job("falha-uma-vez.mp3");
+        assert!(run(&pipeline, &j, false).0.is_err());
+        assert!(run(&pipeline, &j, false).0.is_ok());
+        // Outro job com o mesmo nome também falha uma vez.
+        assert!(run(&pipeline, &job("falha-uma-vez.mp3"), false).0.is_err());
     }
 
     #[test]
     fn panico_na_metade_da_primeira_etapa() {
-        let j = job("panico.mp3", true, false);
-        assert!(catch_unwind(AssertUnwindSafe(|| run(&j, false))).is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let (pipeline, j) = (fake(&dir), job("panico.mp3"));
+        assert!(catch_unwind(AssertUnwindSafe(|| run(&pipeline, &j, false))).is_err());
     }
 
     #[test]
     fn cancelado_para_antes_do_proximo_passo() {
-        let (result, seen) = run(&job("reuniao.mp4", true, false), true);
+        let dir = tempfile::tempdir().unwrap();
+        let (result, seen) = run(&fake(&dir), &job("reuniao.mp4"), true);
         assert_eq!(result, Err(Failure::Canceled));
         assert!(seen.is_empty());
+    }
+
+    #[test]
+    fn probe_pelo_nome() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipeline = fake(&dir);
+        let probe = pipeline.probe("aula.MKV", Path::new("nada")).unwrap();
+        assert_eq!(probe.media, Media::Video);
+        assert_eq!(probe.duration_ms, FakePipeline::DURATION_MS);
+        assert_eq!(probe.estimate, Some(FakePipeline::ESTIMATE));
+        assert_eq!(
+            pipeline.probe("Sem-Audio.mp4", Path::new("nada")),
+            Err(Failure::Error(
+                "Este arquivo não tem áudio. Escolha um vídeo com som.".into()
+            ))
+        );
+        assert_eq!(pipeline.backend().as_deref(), Some(FakePipeline::BACKEND));
     }
 }

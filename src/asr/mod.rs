@@ -1,9 +1,10 @@
-//! Transcrição com o whisper.cpp. Escolhe o backend (GPU dedicada → integrada → CPU com o
-//! modelo menor), carrega o modelo na primeira transcrição e o libera após 10 min sem uso,
+//! Transcrição com o whisper.cpp. Escolhe o backend (GPU dedicada → CPU com o modelo menor),
+//! estima o tempo, carrega o modelo na primeira transcrição e o libera após 10 min sem uso,
 //! roda o VAD Silero, transcreve em pt e tira as frases-fantasma.
 
 mod backend;
 mod cache;
+mod estimate;
 mod log;
 mod models;
 mod phantom;
@@ -15,6 +16,7 @@ use std::ffi::{c_int, c_void};
 use std::fmt;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use whisper_rs::whisper_rs_sys as sys;
@@ -24,10 +26,11 @@ use whisper_rs::{
 
 pub use backend::{Backend, Device, DeviceKind, Plan, devices, free_memory, plans, registry};
 pub use cache::IdleCache;
+pub use estimate::{LOAD_SECS, SHADERS_SECS, estimate, rtf};
 pub use models::{BASE_FILE, LARGE_FILE, Model, ModelKind, Models, SMALL_FILE, Source, VAD_FILE};
 pub use phantom::is_phantom;
 
-use crate::jobs::Failure;
+use crate::jobs::{Estimate, Failure};
 use crate::transcript::Segment;
 
 /// Tempo sem uso até o modelo sair da memória.
@@ -86,6 +89,10 @@ pub struct Asr {
     /// Beam search no lugar do greedy (benchmark).
     beam: Option<i32>,
     cache: IdleCache<Loaded>,
+    /// O último candidato que carregou, depois do fallback.
+    active: Mutex<Option<Plan>>,
+    /// Uma GPU já carregou neste processo: os shaders do Vulkan estão compilados.
+    warmed: AtomicBool,
 }
 
 impl Asr {
@@ -107,6 +114,8 @@ impl Asr {
             threads: default_threads(),
             beam: None,
             cache: IdleCache::new(idle),
+            active: Mutex::new(None),
+            warmed: AtomicBool::new(false),
         }
     }
 
@@ -119,6 +128,34 @@ impl Asr {
 
     pub fn plans(&self) -> &[Plan] {
         &self.plans
+    }
+
+    /// O candidato que vai transcrever: o que carregou por último ou, antes da 1ª carga, o
+    /// primeiro da lista. `None` sem nenhum modelo.
+    pub fn current_plan(&self) -> Option<Plan> {
+        let active = self.active.lock().unwrap_or_else(PoisonError::into_inner);
+        active.clone().or_else(|| self.plans.first().cloned())
+    }
+
+    /// Onde a transcrição roda, para o rodapé.
+    pub fn backend_label(&self) -> Option<String> {
+        self.current_plan().map(|plan| match plan.backend {
+            Backend::Gpu(device) => format!("Transcrição na GPU: {}", device.description),
+            Backend::Cpu => "Transcrição no processador".into(),
+        })
+    }
+
+    /// Quanto deve levar transcrever `audio_ms` de áudio agora; `None` sem nenhum modelo.
+    pub fn estimate(&self, audio_ms: u64) -> Option<Estimate> {
+        let plan = self.current_plan()?;
+        let model = self.models.get(plan.model)?.name;
+        Some(estimate(
+            &plan,
+            model,
+            audio_ms,
+            self.is_loaded(),
+            self.warmed.load(Ordering::Relaxed),
+        ))
     }
 
     /// Se o modelo está na memória (a próxima transcrição não paga a carga).
@@ -167,6 +204,10 @@ impl Asr {
     fn load(&self) -> Result<Loaded, Error> {
         let (plan, loaded) = load_first(&self.plans, |plan| Loaded::load(plan, &self.models))?;
         eprintln!("asr: transcrevendo com {plan} ({})", loaded.model);
+        if matches!(plan.backend, Backend::Gpu(_)) {
+            self.warmed.store(true, Ordering::Relaxed);
+        }
+        *self.active.lock().unwrap_or_else(PoisonError::into_inner) = Some(plan);
         Ok(loaded)
     }
 }
@@ -411,6 +452,68 @@ mod tests {
             Failure::from(Error::Failed),
             Failure::Error("Não consegui transcrever este arquivo. Tente de novo.".into())
         );
+    }
+
+    fn models() -> Models {
+        let model = |name| Model {
+            name,
+            source: Source::Embedded(b""),
+        };
+        Models {
+            large: Some(model("large-v3-turbo")),
+            cpu: Some(model("small")),
+            vad: Some(Source::Embedded(b"")),
+        }
+    }
+
+    #[test]
+    fn rodape_e_estimativa_seguem_o_primeiro_candidato() {
+        let rtx = Plan {
+            backend: Backend::Gpu(Device {
+                index: 1,
+                name: "Vulkan1".into(),
+                description: "NVIDIA GeForce RTX 3050 6GB Laptop GPU".into(),
+                kind: DeviceKind::Dedicated,
+                memory: 6 << 30,
+            }),
+            model: ModelKind::Large,
+            flash_attn: true,
+        };
+        let asr = Asr::new(vec![rtx.clone(), Plan::cpu()], models());
+        assert_eq!(asr.current_plan(), Some(rtx));
+        assert_eq!(
+            asr.backend_label().as_deref(),
+            Some("Transcrição na GPU: NVIDIA GeForce RTX 3050 6GB Laptop GPU")
+        );
+        // 60 s × 0,026 + carga + shaders.
+        assert_eq!(
+            asr.estimate(60_000),
+            Some(Estimate {
+                secs: 12,
+                gpu: true
+            })
+        );
+
+        let cpu = Asr::new(vec![Plan::cpu()], models());
+        assert_eq!(
+            cpu.backend_label().as_deref(),
+            Some("Transcrição no processador")
+        );
+        assert_eq!(
+            cpu.estimate(600_000),
+            Some(Estimate {
+                secs: 65,
+                gpu: false
+            })
+        );
+    }
+
+    #[test]
+    fn sem_candidato_nao_ha_rodape_nem_estimativa() {
+        let asr = Asr::new(Vec::new(), Models::default());
+        assert_eq!(asr.current_plan(), None);
+        assert_eq!(asr.backend_label(), None);
+        assert_eq!(asr.estimate(60_000), None);
     }
 
     #[test]
