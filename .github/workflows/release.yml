@@ -50,8 +50,8 @@ jobs:
       - name: Smoke test
         shell: pwsh
         env:
-          # Otimizado, o whisper.cpp transcreve a amostra em poucos segundos; sem /O2 levava 48 s.
-          SCRIBA_SELF_TEST_MAX_SECS: "20"
+          # O small otimizado transcreve a amostra em ~6 s no runner; sem /O2 levaria ~48 s.
+          SCRIBA_SELF_TEST_MAX_SECS: "15"
         run: |
           Copy-Item C:\t\release\scriba.exe scriba.exe
           .\scriba.exe --self-test
