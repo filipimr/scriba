@@ -1,10 +1,16 @@
-//! `media::probe`, `media::extract_audio` e `media::extract_audio_into` com as fixtures reais
-//! e o FFmpeg estático.
+//! `media::probe`, `media::extract_audio`, `media::extract_audio_into` e
+//! `media::encode_audio` com as fixtures reais e o FFmpeg estático.
+//!
+//! `guardar_audio_longo` (local) codifica o áudio longo de `SCRIBA_LONG_AUDIO`, mede tempo e
+//! tamanho e deixa o `.m4a` em `%TEMP%\scriba-longo`:
+//! `cargo test --release --test media -- --ignored --nocapture`.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
-use scriba::media::{self, Error, SAMPLE_RATE};
+use ffmpeg_next as ffmpeg;
+use scriba::media::{self, AUDIO_BIT_RATE, Error, SAMPLE_RATE};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -229,4 +235,179 @@ fn disco_cheio_da_erro_amigavel() {
                 .into()
         )
     );
+}
+
+/// O que um `.m4a` gravado tem por dentro.
+#[derive(Debug)]
+struct M4a {
+    aac: bool,
+    channels: u16,
+    rate: u32,
+    /// Do contêiner.
+    secs: f64,
+    /// A marca do `ftyp`: `M4A ` é a que o celular reconhece como áudio.
+    brand: [u8; 4],
+}
+
+fn inspect(path: &Path) -> M4a {
+    // O probe inicializa o FFmpeg.
+    let probe = media::probe(path).unwrap();
+    assert!(probe.has_audio && !probe.has_video, "{probe:?}");
+    let ictx = ffmpeg::format::input(path).unwrap();
+    assert_eq!(ictx.streams().count(), 1, "só a faixa de áudio");
+    let stream = ictx.streams().best(ffmpeg::media::Type::Audio).unwrap();
+    let decoder = ffmpeg::codec::context::Context::from_parameters(stream.parameters())
+        .unwrap()
+        .decoder()
+        .audio()
+        .unwrap();
+    let bytes = std::fs::read(path).unwrap();
+    M4a {
+        aac: decoder.id() == ffmpeg::codec::Id::AAC,
+        channels: decoder.channels(),
+        rate: decoder.rate(),
+        secs: probe.duration_ms as f64 / 1_000.0,
+        brand: bytes[8..12].try_into().unwrap(),
+    }
+}
+
+fn encode(input: &Path, output: &Path) -> Result<(), Error> {
+    media::encode_audio(input, output, |_| {}, &AtomicBool::new(false))
+}
+
+#[test]
+fn todos_os_formatos_viram_aac_mono_com_a_duracao_do_original() {
+    let tmp = tempfile::tempdir().unwrap();
+    for name in FORMATS {
+        let original = secs(&extract(&fixture(name)).unwrap());
+        // O `.parte` do app: sem extensão de mídia, o muxer vem pelo nome.
+        let out = tmp.path().join(format!("{name}.m4a.parte"));
+        encode(&fixture(name), &out).unwrap();
+        let m4a = inspect(&out);
+        let decoded = secs(&extract(&out).unwrap());
+        let size = std::fs::metadata(&out).unwrap().len();
+        println!(
+            "{name}: original {original:.3} s → m4a {:.3} s (decodificado {decoded:.3} s), {} Hz, {size} bytes",
+            m4a.secs, m4a.rate
+        );
+        assert!(m4a.aac && m4a.channels == 1, "{name}: {m4a:?}");
+        assert_eq!(&m4a.brand, b"M4A ", "{name}");
+        // O `fala-48k-estereo.m4a` cai para o teto; os outros já vêm a 16 ou 22,05 kHz.
+        let rate = ffmpeg::format::input(&fixture(name))
+            .unwrap()
+            .streams()
+            .best(ffmpeg::media::Type::Audio)
+            .map(|s| {
+                ffmpeg::codec::context::Context::from_parameters(s.parameters())
+                    .unwrap()
+                    .decoder()
+                    .audio()
+                    .unwrap()
+                    .rate()
+            })
+            .unwrap();
+        assert_eq!(m4a.rate, media::audio_rate(rate), "{name}");
+        // A duração é a do áudio do original, não a do contêiner (o vídeo do `fala.mp4`
+        // passa do áudio).
+        assert!((m4a.secs - original).abs() <= 0.1, "{name}: {m4a:?}");
+        assert!((decoded - original).abs() <= 0.1, "{name}: {decoded} s");
+        // 64 kbps, com folga para o cabeçalho e para o encoder abaixo da meta.
+        let max = (AUDIO_BIT_RATE as f64 / 8.0 * original * 1.2) as u64 + 4_096;
+        assert!(size <= max, "{name}: {size} bytes");
+    }
+}
+
+#[test]
+fn guardar_o_audio_tem_progresso_e_o_silencio_sai_valido() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut seen = Vec::new();
+    let out = tmp.path().join("fala.m4a");
+    media::encode_audio(
+        &fixture("fala.mp4"),
+        &out,
+        |p| seen.push(p),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(seen.first(), Some(&0), "{seen:?}");
+    assert_eq!(seen.last(), Some(&100), "{seen:?}");
+    assert!(seen.windows(2).all(|w| w[0] < w[1]), "{seen:?}");
+
+    let out = tmp.path().join("silencio.m4a");
+    encode(&fixture("silencio.wav"), &out).unwrap();
+    let m4a = inspect(&out);
+    let original = secs(&extract(&fixture("silencio.wav")).unwrap());
+    assert!((m4a.secs - original).abs() <= 0.1, "{m4a:?}");
+}
+
+#[test]
+fn cancelar_a_gravacao_nao_deixa_arquivo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("cancelado.m4a");
+    let cancel = AtomicBool::new(false);
+    let err = media::encode_audio(
+        &fixture("fala.wav"),
+        &out,
+        |p| {
+            if p >= 30 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        },
+        &cancel,
+    )
+    .unwrap_err();
+    assert_eq!(err, Error::Canceled);
+    assert!(!out.exists());
+}
+
+#[test]
+fn guardar_sem_audio_ou_em_pasta_invalida_da_erro_amigavel() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("mudo.m4a");
+    assert_eq!(
+        encode(&fixture("video-sem-audio.mp4"), &out).unwrap_err(),
+        Error::NoAudio
+    );
+    assert!(!out.exists());
+
+    let err = encode(&fixture("fala.wav"), &tmp.path().join("nao/existe.m4a")).unwrap_err();
+    assert_eq!(err, Error::Encode);
+    assert_eq!(
+        scriba::jobs::Failure::from(err),
+        scriba::jobs::Failure::Error(
+            "Não consegui guardar o áudio. Confira o espaço livre e se a pasta permite gravação, e tente de novo."
+                .into()
+        )
+    );
+}
+
+#[test]
+#[ignore = "audio longo"]
+fn guardar_audio_longo() {
+    let path = PathBuf::from(
+        std::env::var("SCRIBA_LONG_AUDIO").expect("defina SCRIBA_LONG_AUDIO com um áudio longo"),
+    );
+    let dir = std::env::temp_dir().join("scriba-longo");
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = dir.join(format!(
+        "{}.m4a",
+        path.file_name().unwrap().to_string_lossy()
+    ));
+    let t0 = Instant::now();
+    encode(&path, &out).unwrap();
+    let took = t0.elapsed().as_secs_f64();
+    let m4a = inspect(&out);
+    let size = std::fs::metadata(&out).unwrap().len();
+    let original = media::probe(&path).unwrap().duration_ms as f64 / 1_000.0;
+    println!(
+        "{}: {original:.1} s de mídia → {} em {took:.1} s ({:.0}× tempo real), {:.1} MB ({:.1} MB/h), {} Hz, {:.3} s",
+        path.display(),
+        out.display(),
+        original / took,
+        size as f64 / 1e6,
+        size as f64 / 1e6 / (m4a.secs / 3_600.0),
+        m4a.rate,
+        m4a.secs,
+    );
+    assert!(m4a.aac && m4a.channels == 1, "{m4a:?}");
 }
