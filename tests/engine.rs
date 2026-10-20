@@ -1,6 +1,17 @@
 //! O pipeline do app de ponta a ponta: a fila real com o `Engine` (FFmpeg + whisper com o
-//! modelo base na CPU, como no CI) e as fixtures. O de hardware usa a GPU dedicada:
-//! `cargo test --release --features vulkan --test engine -- --ignored`.
+//! modelo base na CPU, como no CI) e as fixtures. Os de hardware usam a GPU dedicada e
+//! áudios longos de verdade, um teste por vez, porque o pico de RAM é o do processo:
+//!
+//! `cargo test --release --features vulkan --test engine -- --ignored --test-threads=1 --nocapture`
+//!
+//! - `SCRIBA_LONG_AUDIO` (`uma_hora`) e `SCRIBA_LONG_AUDIO_3H` (`tres_horas`): os áudios ou
+//!   vídeos longos.
+//! - `SCRIBA_LONG_DEVICES`: `gpu` (a dedicada) e `cpu` (o modelo da CPU), separados por
+//!   vírgula; padrão: os dois.
+//! - `SCRIBA_LONG_BLOCK_MIN`: o tamanho do bloco em minutos, no lugar de 30 (um valor
+//!   enorme mede "sem blocos").
+//!
+//! As transcrições longas ficam em `%TEMP%\scriba-longo`, para conferir o texto.
 
 mod common;
 
@@ -10,8 +21,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use common::{base_models, fixture, keyword_hits};
-use scriba::asr::{Asr, Plan};
+use common::{Sampler, base_models, fixture, keyword_hits, working_set};
+use scriba::asr::{self, Asr, Backend, Models, Plan};
 use scriba::clock::LocalTime;
 use scriba::engine::Engine;
 use scriba::jobs::{Ctx, Failure, Job, JobId, Jobs, Media, Outputs, Pipeline, Stage, State};
@@ -77,6 +88,10 @@ struct Setup {
 
 impl Setup {
     fn new() -> Self {
+        Self::with(engine)
+    }
+
+    fn with(engine: impl FnOnce(&Path) -> Engine) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("saidas");
         let (jobs, worker) =
@@ -160,6 +175,30 @@ fn pausa_longa_da_dois_paragrafos_e_nome_repetido_ganha_sufixo() {
 }
 
 #[test]
+fn blocos_pelo_audio_temporario() {
+    // Blocos de 5 s nos ~13 s do `pausas.wav`: o mesmo texto em dois parágrafos.
+    let setup = Setup::with(|out| {
+        Engine::with_asr(
+            out.into(),
+            Asr::new(vec![Plan::cpu()], base_models()).blocks(Duration::from_secs(5)),
+        )
+    });
+    let outputs = setup.run("pausas.wav");
+    let parsed = transcript::parse(&std::fs::read_to_string(&outputs.txt).unwrap());
+    assert_eq!(parsed.blocks.len(), 2, "{parsed:?}");
+    let text = format!("{:?}", parsed.blocks).to_lowercase();
+    assert!(
+        text.contains("orçamento") && text.contains("cronograma"),
+        "{text}"
+    );
+    // Nem o envio nem o áudio extraído (`<id>.f32`) ficam em `uploads`.
+    let left: Vec<_> = std::fs::read_dir(setup.jobs.uploads_dir())
+        .unwrap()
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
+#[test]
 fn cancelar_na_transcricao_nao_deixa_pasta() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("saidas");
@@ -198,6 +237,7 @@ fn cancelar_na_transcricao_nao_deixa_pasta() {
         "{seen:?}"
     );
     assert!(!out.exists() || std::fs::read_dir(&out).unwrap().count() == 0);
+    assert!(!scriba::engine::spool_path(&job.input).exists());
 }
 
 #[test]
@@ -269,4 +309,123 @@ fn na_gpu_dedicada() {
             .unwrap();
     assert_eq!(manifest.model, "large-v3-turbo");
     assert!(worker.shutdown(Duration::from_secs(30)));
+}
+
+/// Meta da etapa 4.6: o pico de RAM em qualquer duração.
+const MAX_RAM: u64 = 1_536 << 20;
+
+/// Transcreve o áudio longo de `var` em cada backend pedido, com o `Engine` real, e imprime
+/// tempo, RTF e pico de RAM. Afirma as metas de 1 h de áudio (≤ 10 min na GPU dedicada,
+/// ≤ 1 h na CPU, proporcionais à duração) e o pico de RAM.
+fn long_audio(var: &str) {
+    let path = PathBuf::from(
+        std::env::var(var).unwrap_or_else(|_| panic!("defina {var} com um áudio longo")),
+    );
+    let devices = std::env::var("SCRIBA_LONG_DEVICES").unwrap_or_else(|_| "gpu,cpu".into());
+    let block = std::env::var("SCRIBA_LONG_BLOCK_MIN")
+        .ok()
+        .map(|m| Duration::from_secs(m.parse::<u64>().expect("minutos") * 60));
+    let out = std::env::temp_dir().join("scriba-longo");
+    let dir = tempfile::tempdir().unwrap();
+    // O `Engine` grava o áudio extraído ao lado do envio: um link no temporário evita
+    // copiar o arquivo e não suja a pasta dele.
+    let input = dir.path().join(format!(
+        "entrada.{}",
+        path.extension().unwrap().to_str().unwrap()
+    ));
+    if std::fs::hard_link(&path, &input).is_err() {
+        std::fs::copy(&path, &input).unwrap();
+    }
+    let name = path.file_name().unwrap().to_str().unwrap().to_string();
+
+    let mut rows = Vec::new();
+    for device in devices.split(',').map(str::trim) {
+        let models = Models::locate();
+        let plans: Vec<Plan> = asr::plans(&asr::devices(), &models)
+            .into_iter()
+            .filter(|p| match device {
+                "gpu" => matches!(p.backend, Backend::Gpu(_)),
+                "cpu" => p.backend == Backend::Cpu,
+                other => panic!("dispositivo desconhecido: {other}"),
+            })
+            .collect();
+        assert!(!plans.is_empty(), "sem candidato para {device}");
+        let mut asr = Asr::new(plans, models);
+        if let Some(block) = block {
+            asr = asr.blocks(block);
+        }
+        let engine = Engine::with_asr(out.clone(), asr);
+        let probe = engine.probe(&name, &input).unwrap();
+        let job = Job {
+            id: JobId::generate(),
+            name: name.clone(),
+            media: probe.media,
+            size: std::fs::metadata(&input).unwrap().len(),
+            duration_ms: probe.duration_ms,
+            created: created(),
+            estimate: probe.estimate,
+            input: input.clone(),
+            state: State::Queued,
+        };
+        let last = Mutex::new((Stage::ExtractingAudio, 0u8));
+        let t0 = Instant::now();
+        let label = device.to_string();
+        let ctx = Ctx::new(Arc::new(AtomicBool::new(false)), move |stage, pct| {
+            let mut last = last.lock().unwrap();
+            if stage != last.0 || pct >= last.1 + 10 || pct == 100 {
+                println!("{label}: {stage:?} {pct}% em {:.0?}", t0.elapsed());
+                *last = (stage, pct);
+            }
+        });
+        let baseline = working_set();
+        let sampler = Sampler::start();
+        let outputs = engine.run(&job, &ctx).unwrap();
+        let peak = sampler.stop();
+        let manifest: Manifest =
+            serde_json::from_slice(&std::fs::read(outputs.dir.join(transcript::JOB_FILE)).unwrap())
+                .unwrap();
+        assert!(!scriba::engine::spool_path(&input).exists());
+        let t = manifest.timings;
+        let audio_secs = manifest.duration_ms as f64 / 1_000.0;
+        let row = format!(
+            "| {name} | {device} ({}) | {:.0} min | {:.1} s | {:.1} s | {:.1} s | {:.3} | {} MB | {} MB | {} |",
+            manifest.model,
+            audio_secs / 60.0,
+            t.extract_ms as f64 / 1_000.0,
+            t.transcribe_ms as f64 / 1_000.0,
+            t.total_ms as f64 / 1_000.0,
+            t.total_ms as f64 / 1_000.0 / audio_secs,
+            baseline >> 20,
+            peak >> 20,
+            outputs.txt.display(),
+        );
+        println!("{row}");
+        rows.push(row.clone());
+        let hours = audio_secs / 3_600.0;
+        let limit = if device == "gpu" { 600.0 } else { 3_600.0 } * hours;
+        assert!(t.total_ms as f64 / 1_000.0 <= limit, "{row}");
+        assert!(peak <= MAX_RAM, "pico de {} MB: {row}", peak >> 20);
+        drop(engine);
+    }
+    println!(
+        "\n| Arquivo | Backend | Duração | Extração | Transcrição | Total | RTF | RAM antes | Pico de RAM | Saída |"
+    );
+    println!("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+    for row in rows {
+        println!("{row}");
+    }
+}
+
+/// 1 h de áudio real: tempo e pico de RAM na GPU dedicada e na CPU.
+#[test]
+#[ignore = "hardware"]
+fn uma_hora() {
+    long_audio("SCRIBA_LONG_AUDIO");
+}
+
+/// 3 h de áudio real: o pico de RAM continua o de um bloco.
+#[test]
+#[ignore = "hardware"]
+fn tres_horas() {
+    long_audio("SCRIBA_LONG_AUDIO_3H");
 }

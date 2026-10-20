@@ -1,13 +1,14 @@
 [package]
 name = "scriba"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 publish = false
 
 [features]
-# Embute o modelo base, o VAD e a amostra usados pelo `--self-test` (release do CI).
-embedded-test-model = ["scriba-model/embedded-test-model"]
+# Embute o modelo da CPU (small), o VAD e a amostra do `--self-test`: a release do CI, que
+# transcreve no processador.
+embedded-cpu-model = ["scriba-model/embedded-cpu-model"]
 # whisper.cpp com backend Vulkan (exige o Vulkan SDK no build): `cargo run --features vulkan`.
 vulkan = ["whisper-rs/vulkan"]
 # O pipeline falso (`FakePipeline`) e a flag `--fake-pipeline`, para o E2E e os testes que

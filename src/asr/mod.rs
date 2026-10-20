@@ -1,8 +1,9 @@
 //! Transcrição com o whisper.cpp. Escolhe o backend (GPU dedicada → CPU com o modelo menor),
 //! estima o tempo, carrega o modelo na primeira transcrição e o libera após 10 min sem uso,
-//! roda o VAD Silero, transcreve em pt e tira as frases-fantasma.
+//! roda o VAD Silero, transcreve em pt, em blocos de ~30 min, e tira as frases-fantasma.
 
 mod backend;
+mod blocks;
 mod cache;
 mod estimate;
 mod log;
@@ -14,6 +15,8 @@ use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::ffi::{c_int, c_void};
 use std::fmt;
+use std::io;
+use std::ops::Range;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
@@ -25,6 +28,7 @@ use whisper_rs::{
 };
 
 pub use backend::{Backend, Device, DeviceKind, Plan, devices, free_memory, plans, registry};
+pub use blocks::BLOCK;
 pub use cache::IdleCache;
 pub use estimate::{LOAD_SECS, SHADERS_SECS, estimate, rtf};
 pub use models::{BASE_FILE, LARGE_FILE, Model, ModelKind, Models, SMALL_FILE, Source, VAD_FILE};
@@ -40,6 +44,34 @@ pub const IDLE: Duration = Duration::from_secs(600);
 const VAD_THREADS: i32 = 4;
 /// Menos que 0,1 s de fala o whisper nem processa.
 const MIN_SPEECH: usize = 1_600;
+/// Amostras por segundo, a 16 kHz.
+const PER_SEC: usize = 16_000;
+
+/// O áudio 16 kHz mono a transcrever, lido por intervalos: na memória ou em disco (o
+/// `media::Spool`), para a transcrição em blocos não segurar a duração inteira.
+pub trait Samples {
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Troca o conteúdo de `buf` pelas amostras de `range` (cortado no fim do áudio).
+    fn read(&mut self, range: Range<usize>, buf: &mut Vec<f32>) -> io::Result<()>;
+}
+
+impl Samples for &[f32] {
+    fn len(&self) -> usize {
+        <[f32]>::len(self)
+    }
+
+    fn read(&mut self, range: Range<usize>, buf: &mut Vec<f32>) -> io::Result<()> {
+        let end = range.end.min(<[f32]>::len(self));
+        buf.clear();
+        buf.extend_from_slice(&self[range.start.min(end)..end]);
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -88,6 +120,8 @@ pub struct Asr {
     threads: i32,
     /// Beam search no lugar do greedy (benchmark).
     beam: Option<i32>,
+    /// Tamanho do bloco, em amostras.
+    block: usize,
     cache: IdleCache<Loaded>,
     /// O último candidato que carregou, depois do fallback.
     active: Mutex<Option<Plan>>,
@@ -113,6 +147,7 @@ impl Asr {
             models,
             threads: default_threads(),
             beam: None,
+            block: block_samples(BLOCK),
             cache: IdleCache::new(idle),
             active: Mutex::new(None),
             warmed: AtomicBool::new(false),
@@ -123,6 +158,12 @@ impl Asr {
     /// comparar a precisão.
     pub fn beam(mut self, size: i32) -> Self {
         self.beam = Some(size);
+        self
+    }
+
+    /// Transcreve em blocos de `size` em vez de 30 min (os testes usam poucos segundos).
+    pub fn blocks(mut self, size: Duration) -> Self {
+        self.block = block_samples(size);
         self
     }
 
@@ -177,6 +218,16 @@ impl Asr {
         progress: impl FnMut(u8),
         cancel: &AtomicBool,
     ) -> Result<Transcription, Error> {
+        self.transcribe_samples(&mut { audio }, progress, cancel)
+    }
+
+    /// Como [`Asr::transcribe`], lendo o áudio um bloco por vez.
+    pub fn transcribe_samples(
+        &self,
+        audio: &mut dyn Samples,
+        progress: impl FnMut(u8),
+        cancel: &AtomicBool,
+    ) -> Result<Transcription, Error> {
         if cancel.load(Ordering::Relaxed) {
             return Err(Error::Canceled);
         }
@@ -191,12 +242,9 @@ impl Asr {
         self.cache.with(
             || self.load(),
             |loaded| {
-                loaded.run(
-                    audio,
-                    &mut report,
-                    cancel,
-                    full_params(self.threads, self.beam),
-                )
+                loaded.run(audio, self.block, &mut report, cancel, &|| {
+                    full_params(self.threads, self.beam)
+                })
             },
         )?
     }
@@ -210,6 +258,14 @@ impl Asr {
         *self.active.lock().unwrap_or_else(PoisonError::into_inner) = Some(plan);
         Ok(loaded)
     }
+}
+
+/// Um bloco tem pelo menos 1 s: o corte precisa de espaço para achar uma pausa.
+fn block_samples(size: Duration) -> usize {
+    usize::try_from(size.as_millis())
+        .unwrap_or(usize::MAX)
+        .saturating_mul(PER_SEC / 1_000)
+        .max(PER_SEC)
 }
 
 /// Threads do whisper: núcleos lógicos − 2 (etapa 4.1).
@@ -278,64 +334,71 @@ impl Loaded {
         })
     }
 
+    /// Transcreve bloco a bloco: cada janela de `block` amostras passa pelo VAD, é cortada
+    /// numa pausa perto do fim (`blocks::cut`) e só a fala até o corte vai para o whisper.
+    /// O progresso de cada bloco ocupa a fatia dele no áudio inteiro.
     fn run(
         &mut self,
-        audio: &[f32],
+        audio: &mut dyn Samples,
+        block: usize,
         report: &mut dyn FnMut(u8),
         cancel: &AtomicBool,
-        mut params: FullParams<'static, 'static>,
+        params: &dyn Fn() -> FullParams<'static, 'static>,
     ) -> Result<Transcription, Error> {
         report(0);
-        let spans = self.vad.speech(audio).map_err(|e| {
-            eprintln!("asr: {e}");
-            Error::Failed
-        })?;
-        if cancel.load(Ordering::Relaxed) {
-            return Err(Error::Canceled);
-        }
-        let (speech, map) = vad::splice(audio, &spans);
+        let total = audio.len();
         let mut segments = Vec::new();
-        if speech.len() >= MIN_SPEECH {
-            let hooks = Hooks {
-                report: RefCell::new(report),
-                cancel,
-                panic: Cell::new(None),
-            };
-            // SAFETY: os callbacks recebem `&hooks`, que vive até o fim do `full`; o
-            // whisper.cpp só os chama durante a chamada, na thread dela.
-            unsafe {
-                params.set_progress_callback(Some(on_progress));
-                params.set_progress_callback_user_data((&raw const hooks).cast_mut().cast());
-                params.set_abort_callback(Some(on_abort));
-                params.set_abort_callback_user_data((&raw const hooks).cast_mut().cast());
+        let mut window = Vec::new();
+        let mut cursor = 0;
+        while cursor < total {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(Error::Canceled);
             }
-            let result = self.state.full(params, &speech);
-            if let Some(payload) = hooks.panic.take() {
-                panic::resume_unwind(payload);
+            audio
+                .read(cursor..cursor.saturating_add(block), &mut window)
+                .map_err(|e| {
+                    eprintln!("asr: não consegui ler o áudio extraído: {e}");
+                    Error::Failed
+                })?;
+            if window.is_empty() {
+                break;
+            }
+            let mut spans = self.vad.speech(&window).map_err(|e| {
+                eprintln!("asr: {e}");
+                Error::Failed
+            })?;
+            let len = if cursor + window.len() >= total {
+                window.len()
+            } else {
+                blocks::cut(&spans, window.len()).unwrap_or_else(|| {
+                    eprintln!(
+                        "asr: sem pausa perto de {} s; o bloco corta no fim da janela",
+                        (cursor + window.len()) / PER_SEC
+                    );
+                    window.len()
+                })
+            };
+            spans.retain(|s| s.start < len);
+            if let Some(last) = spans.last_mut() {
+                last.end = last.end.min(len);
             }
             if cancel.load(Ordering::Relaxed) {
                 return Err(Error::Canceled);
             }
-            result.map_err(|e| {
-                eprintln!("asr: o whisper falhou: {e}");
-                Error::Failed
-            })?;
-            for segment in self.state.as_iter() {
-                let text = segment
-                    .to_str_lossy()
-                    .map(|t| t.trim().to_string())
-                    .unwrap_or_default();
-                if is_phantom(&text, segment.no_speech_probability()) {
-                    continue;
-                }
-                let (start_ms, end_ms) =
-                    map.segment_ms(segment.start_timestamp(), segment.end_timestamp());
-                segments.push(Segment {
-                    start_ms,
-                    end_ms,
-                    text,
-                });
-            }
+            let (speech, map) = vad::splice(&window[..len], &spans);
+            let map = map.offset(cursor);
+            let (base, share) = (cursor as f64 / total as f64, len as f64 / total as f64);
+            let mut block_report =
+                |pct: u8| report(((base + share * f64::from(pct) / 100.0) * 100.0) as u8);
+            self.whisper(
+                &speech,
+                &map,
+                &mut block_report,
+                cancel,
+                params(),
+                &mut segments,
+            )?;
+            cursor += len;
         }
         report(100);
         Ok(Transcription {
@@ -343,6 +406,63 @@ impl Loaded {
             plan: self.plan.clone(),
             model: self.model,
         })
+    }
+
+    /// Roda o whisper na fala de um bloco e acrescenta a `segments` o que ele achou, com os
+    /// tempos do original.
+    fn whisper(
+        &mut self,
+        speech: &[f32],
+        map: &vad::TimeMap,
+        report: &mut dyn FnMut(u8),
+        cancel: &AtomicBool,
+        mut params: FullParams<'static, 'static>,
+        segments: &mut Vec<Segment>,
+    ) -> Result<(), Error> {
+        if speech.len() < MIN_SPEECH {
+            return Ok(());
+        }
+        let hooks = Hooks {
+            report: RefCell::new(report),
+            cancel,
+            panic: Cell::new(None),
+        };
+        // SAFETY: os callbacks recebem `&hooks`, que vive até o fim do `full`; o
+        // whisper.cpp só os chama durante a chamada, na thread dela.
+        unsafe {
+            params.set_progress_callback(Some(on_progress));
+            params.set_progress_callback_user_data((&raw const hooks).cast_mut().cast());
+            params.set_abort_callback(Some(on_abort));
+            params.set_abort_callback_user_data((&raw const hooks).cast_mut().cast());
+        }
+        let result = self.state.full(params, speech);
+        if let Some(payload) = hooks.panic.take() {
+            panic::resume_unwind(payload);
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Err(Error::Canceled);
+        }
+        result.map_err(|e| {
+            eprintln!("asr: o whisper falhou: {e}");
+            Error::Failed
+        })?;
+        for segment in self.state.as_iter() {
+            let text = segment
+                .to_str_lossy()
+                .map(|t| t.trim().to_string())
+                .unwrap_or_default();
+            if is_phantom(&text, segment.no_speech_probability()) {
+                continue;
+            }
+            let (start_ms, end_ms) =
+                map.segment_ms(segment.start_timestamp(), segment.end_timestamp());
+            segments.push(Segment {
+                start_ms,
+                end_ms,
+                text,
+            });
+        }
+        Ok(())
     }
 }
 
@@ -485,11 +605,11 @@ mod tests {
             asr.backend_label().as_deref(),
             Some("Transcrição na GPU: NVIDIA GeForce RTX 3050 6GB Laptop GPU")
         );
-        // 60 s × 0,026 + carga + shaders.
+        // 60 s × 0,032 + carga + shaders.
         assert_eq!(
             asr.estimate(60_000),
             Some(Estimate {
-                secs: 12,
+                secs: 13,
                 gpu: true
             })
         );
@@ -502,7 +622,7 @@ mod tests {
         assert_eq!(
             cpu.estimate(600_000),
             Some(Estimate {
-                secs: 65,
+                secs: 77,
                 gpu: false
             })
         );

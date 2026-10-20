@@ -128,6 +128,106 @@ fn pausa_longa_quebra_o_paragrafo() {
     assert!(paragraphs[1].start_ms >= 5_000, "{paragraphs:?}");
 }
 
+/// Bloco reduzido, para o áudio de ~37 s abaixo passar por três blocos.
+const BLOCO: Duration = Duration::from_secs(12);
+
+/// `fala.wav` + 1 s de silêncio + `pausas.wav` + `fala.wav` (~37 s) e onde começa cada
+/// `fala.wav`, em ms.
+fn longo() -> (Vec<f32>, [u64; 2]) {
+    let fala = audio("fala.wav");
+    let mut samples = fala.clone();
+    samples.extend(std::iter::repeat_n(0.0, 16_000));
+    samples.extend(audio("pausas.wav"));
+    let last = (samples.len() / 16) as u64;
+    samples.extend(&fala);
+    (samples, [0, last])
+}
+
+/// O texto dos segmentos que começam em `range` (ms).
+fn text_in(segments: &[Segment], range: std::ops::Range<u64>) -> String {
+    let inside: Vec<_> = segments
+        .iter()
+        .filter(|s| range.contains(&s.start_ms))
+        .cloned()
+        .collect();
+    text(&inside)
+}
+
+#[test]
+fn blocos_mantem_os_tempos_e_os_paragrafos() {
+    let (samples, [_, last]) = longo();
+    let mut seen = Vec::new();
+    let blocks = base_cpu()
+        .blocks(BLOCO)
+        .transcribe(&samples, |p| seen.push(p), &never())
+        .unwrap();
+    let whole = base_cpu().transcribe(&samples, |_| {}, &never()).unwrap();
+    for (name, segments) in [("blocos", &blocks.segments), ("inteiro", &whole.segments)] {
+        println!("{name}:");
+        for s in segments {
+            println!("  {:>6} {:>6} {}", s.start_ms, s.end_ms, s.text);
+        }
+    }
+
+    // Tempos do áudio inteiro, não do bloco: crescentes e dentro da duração.
+    assert_timeline(&blocks.segments, samples.len());
+    let head = text_in(&blocks.segments, 0..11_000);
+    let tail = text_in(&blocks.segments, last..u64::MAX);
+    assert!(keyword_hits(&head) >= 4, "{head}");
+    assert!(keyword_hits(&tail) >= 4, "{tail}");
+    assert!(
+        text_in(&blocks.segments, 11_000..last)
+            .to_lowercase()
+            .contains("cronograma"),
+        "{:?}",
+        blocks.segments
+    );
+
+    // A emenda não quebra nem junta parágrafos: as pausas são as do original.
+    let paragraphs = |segments| {
+        transcript::paragraphs(segments)
+            .iter()
+            .map(|p| p.start_ms / 1_000)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        paragraphs(&blocks.segments).len(),
+        paragraphs(&whole.segments).len(),
+        "{:?} × {:?}",
+        paragraphs(&blocks.segments),
+        paragraphs(&whole.segments)
+    );
+
+    // O progresso atravessa os blocos sem voltar.
+    assert_eq!(seen.first(), Some(&0), "{seen:?}");
+    assert_eq!(seen.last(), Some(&100), "{seen:?}");
+    assert!(seen.windows(2).all(|w| w[0] < w[1]), "{seen:?}");
+    assert!(seen.len() >= 4, "{seen:?}");
+}
+
+#[test]
+fn cancelar_no_segundo_bloco() {
+    let (samples, _) = longo();
+    let cancel = AtomicBool::new(false);
+    let mut seen = Vec::new();
+    // O 1º bloco termina no silêncio depois do 1º `fala.wav` (~11 s de ~37 s): o primeiro
+    // progresso acima de 0 já é do 2º bloco.
+    let result = base_cpu().blocks(BLOCO).transcribe(
+        &samples,
+        |p| {
+            seen.push(p);
+            if p > 0 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        },
+        &cancel,
+    );
+    println!("{seen:?}");
+    assert_eq!(result.unwrap_err(), Error::Canceled);
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    assert!((20..50).contains(&seen[1]), "{seen:?}");
+}
+
 #[test]
 fn gpu_que_nao_existe_cai_para_a_cpu() {
     // O whisper.cpp não acha o dispositivo 99, loga "no GPU found" e seguiria na CPU sem

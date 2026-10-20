@@ -19,11 +19,11 @@
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::thread::{self, JoinHandle};
+use std::sync::atomic::AtomicBool;
+use std::thread;
 use std::time::{Duration, Instant};
 
+use common::{Sampler, memory, working_set};
 use scriba::asr::{self, Asr, Backend, DeviceKind, Model, ModelKind, Models, Plan, Source};
 
 fn list(name: &str, default: &str) -> Vec<String> {
@@ -323,61 +323,6 @@ fn word_errors(reference: &str, hypothesis: &str) -> (usize, usize) {
         std::mem::swap(&mut previous, &mut current);
     }
     (previous[h.len()], r.len())
-}
-
-/// O working set do processo agora.
-fn working_set() -> u64 {
-    memory().0
-}
-
-/// Working set atual e de pico do processo, em bytes.
-fn memory() -> (u64, u64) {
-    use windows_sys::Win32::System::ProcessStatus::{
-        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
-    };
-    use windows_sys::Win32::System::Threading::GetCurrentProcess;
-    // SAFETY: estrutura C sem invariantes; zero é um valor válido.
-    let mut counters: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
-    let size = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
-    // SAFETY: o pseudo-handle do processo atual sempre vale, e `counters` tem o tamanho
-    // informado.
-    let ok = unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, size) };
-    assert_ne!(ok, 0, "GetProcessMemoryInfo falhou");
-    (
-        counters.WorkingSetSize as u64,
-        counters.PeakWorkingSetSize as u64,
-    )
-}
-
-/// Amostra o working set a cada 20 ms e guarda o maior: o pico do processo não volta a
-/// zero entre uma configuração e outra.
-struct Sampler {
-    stop: Arc<AtomicBool>,
-    peak: Arc<AtomicU64>,
-    thread: JoinHandle<()>,
-}
-
-impl Sampler {
-    fn start() -> Self {
-        let stop = Arc::new(AtomicBool::new(false));
-        let peak = Arc::new(AtomicU64::new(working_set()));
-        let thread = thread::spawn({
-            let (stop, peak) = (stop.clone(), peak.clone());
-            move || {
-                while !stop.load(Ordering::Relaxed) {
-                    peak.fetch_max(working_set(), Ordering::Relaxed);
-                    thread::sleep(Duration::from_millis(20));
-                }
-            }
-        });
-        Self { stop, peak, thread }
-    }
-
-    fn stop(self) -> u64 {
-        self.stop.store(true, Ordering::Relaxed);
-        self.thread.join().unwrap();
-        self.peak.load(Ordering::Relaxed)
-    }
 }
 
 #[test]

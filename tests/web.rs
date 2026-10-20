@@ -191,7 +191,10 @@ async fn pagina_inicial_com_cookie() {
     assert!(body.contains("Solte um vídeo ou áudio aqui"));
     assert!(body.contains("aria-label=\"Tema: Sistema\""));
     assert!(
-        body.contains("Scriba 0.1.0 · Transcrição no processador"),
+        body.contains(&format!(
+            "Scriba {} · Transcrição no processador",
+            env!("CARGO_PKG_VERSION")
+        )),
         "backend no rodapé"
     );
     assert!(!body.contains("Transcrever") && !body.contains("Compactar"));

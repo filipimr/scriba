@@ -1,4 +1,5 @@
-//! `media::probe` e `media::extract_audio` com as fixtures reais e o FFmpeg estático.
+//! `media::probe`, `media::extract_audio` e `media::extract_audio_into` com as fixtures reais
+//! e o FFmpeg estático.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -184,5 +185,48 @@ fn erros_viram_falha_do_job() {
     assert_eq!(
         Failure::from(Error::Unreadable),
         Failure::Error("Não consegui ler o áudio deste arquivo. Ele pode estar corrompido.".into())
+    );
+}
+
+#[test]
+fn em_pedacos_entrega_o_mesmo_audio() {
+    for name in ["fala.mp4", "fala-48k-estereo.m4a", "fala.wav"] {
+        let whole = extract(&fixture(name)).unwrap();
+        let mut chunks = 0;
+        let mut joined = Vec::new();
+        let total = media::extract_audio_into(
+            &fixture(name),
+            |samples| {
+                chunks += 1;
+                joined.extend_from_slice(samples);
+                Ok(())
+            },
+            |_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(joined, whole, "{name}");
+        assert_eq!(total, whole.len() as u64, "{name}");
+        assert!(chunks > 10, "{name}: {chunks} pedaços");
+    }
+}
+
+#[test]
+fn disco_cheio_da_erro_amigavel() {
+    let err = media::extract_audio_into(
+        &fixture("fala.wav"),
+        |_| Err(std::io::Error::other("disco cheio")),
+        |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap_err();
+    assert_eq!(err, Error::Disk);
+    assert_eq!(
+        scriba::jobs::Failure::from(err),
+        scriba::jobs::Failure::Error(
+            "Não consegui gravar o áudio temporário. Confira o espaço livre em disco e tente \
+             de novo."
+                .into()
+        )
     );
 }

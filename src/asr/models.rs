@@ -92,14 +92,18 @@ impl Models {
         }
     }
 
-    /// Os que o build embutiu (`embedded-model`).
+    /// Os que o build embutiu: o large com `embedded-model`, o da CPU e o VAD com
+    /// `embedded-cpu-model` (a release do CI).
     pub fn embedded() -> Self {
         Self {
             large: scriba_model::WHISPER.map(|bytes| Model {
                 name: "large-v3-turbo",
                 source: Source::Embedded(bytes),
             }),
-            cpu: None,
+            cpu: scriba_model::CPU_WHISPER.map(|bytes| Model {
+                name: CPU_MODEL.0,
+                source: Source::Embedded(bytes),
+            }),
             vad: scriba_model::VAD.map(Source::Embedded),
         }
     }

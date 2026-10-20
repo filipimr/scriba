@@ -13,7 +13,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | 2 | Esqueleto do app e design system | Concluída |
 | 3 | Fila de jobs e upload | Concluída |
 | 3.5 | Build nativo mais rápido | Concluída |
-| 4 | Transcrição de arquivos (MVP) | Em andamento |
+| 4 | Transcrição de arquivos (MVP) | Concluída |
 | 5 | Guardar áudio | Não iniciada |
 | 6 | Gravação ao vivo | Não iniciada |
 | 7 | Robustez, empacotamento e entrega final | Não iniciada |
@@ -111,8 +111,8 @@ Navegador (HTMX)  ⇄  Axum @127.0.0.1 [token + Host/Origin]
                         │ upload em streaming → %LOCALAPPDATA%\Scriba\uploads
                         ▼
                  JobStore (HashMap em memória) ──mpsc──▶ Worker (thread dedicada, 1 job por vez)
-                        ▲                                   ├─ media::extract_audio  (FFmpeg → 16 kHz mono f32)
-                        │                                   ├─ asr::transcribe       (whisper + VAD, progresso/cancelar)
+                        ▲                                   ├─ media::extract_audio  (FFmpeg → 16 kHz mono f32, num temporário em disco)
+                        │                                   ├─ asr::transcribe       (whisper + VAD em blocos de ~30 min, progresso/cancelar)
                         │                                   ├─ transcript::write     (.txt e .md com [hh:mm:ss] e Você/Outros)
                         │                                   └─ media::encode_audio   (.m4a, só se o usuário pedir)
                  Recorder (AudioSource: cpal mic + loopback + silêncio na saída | fake nos testes)
@@ -324,6 +324,8 @@ O plano da fase a divide em seis etapas, cada uma com o próprio PR: 4.1 whisper
 - [x] `transcript`: parágrafos (pausa > 1,5 s quebra), `[hh:mm:ss]` em cada parágrafo e cabeçalho (origem, data, duração). Gera `transcricao.txt`, `transcricao.md` e `job.json`.
 - [x] Fluxo automático: o envio deixa de ter as opções "Transcrever" e "Compactar". Todo job extrai o áudio e transcreve; a pergunta "Guardar o áudio?" entra na Fase 5.
 - [x] UI: leitor da transcrição, Copiar texto, Baixar .txt, Baixar .md e Abrir pasta (etapa 4.5).
+- [x] Reuniões longas (etapa 4.6): o áudio extraído vai para um temporário em disco (`uploads/<id>.f32`) e a transcrição lê blocos de ~30 min, cortados no meio de uma pausa do VAD perto do fim do bloco; os tempos voltam ao original, e o parágrafo na emenda quebra como sem blocos. A RAM acompanha o bloco, não a duração.
+- [x] Release (etapa 4.6): o exe do CI embute o modelo da CPU (`small`), o VAD e a amostra do self-test (`embedded-cpu-model`) e transcreve no processador; a GPU e o large entram na release completa da Fase 7.
 - [x] Herdado da Fase 3 (etapa 4.4):
   - O pipeline real substitui o falso no app; o falso vai para a feature `test-support`, com a flag `--fake-pipeline` para o E2E.
   - "Tentar de novo" no job que falhou (o envio fica guardado até a nova tentativa).
@@ -341,13 +343,13 @@ O plano da fase a divide em seis etapas, cada uma com o próprio PR: 4.1 whisper
 - [x] E2E: upload → texto visível → copiar → .txt e .md baixados com o conteúdo certo.
 - [x] Unitário: a escolha do backend prefere GPU dedicada (a de mais memória), depois CPU com o modelo menor; a integrada fica de fora (com uma lista de dispositivos falsa).
 - [x] Local: benchmark em cada backend (RTX, Intel integrada e só CPU), com 45,5 min de fala real do FLEURS pt_br no lugar de 1 h (etapa 4.3).
-- [ ] Local: pico de RAM e tempo com 1 h e 3 h de áudio, com a transcrição em blocos de ~30 min (meta: ≤ ~1,5 GB em qualquer duração). (O item "compactar antes acelera?" saiu com a compactação.)
+- [x] Local: pico de RAM e tempo com 1 h e 3 h de áudio, com a transcrição em blocos de ~30 min (meta: ≤ ~1,5 GB em qualquer duração): pico máximo de 680 MB na RTX e 1.139 MB na CPU, em 1 h e em 3 h 13 min (`uma_hora` e `tres_horas` em `tests/engine.rs`). (O item "compactar antes acelera?" saiu com a compactação.)
 
 **Pronto quando:**
 
-- [ ] Arquivos reais (MP4 do Teams, MP3, M4A, WAV, OGG) viram texto pt-BR correto, em `.txt` e `.md`.
-- [ ] O tempo para transcrever 1 h de áudio na RTX 3050 está registrado.
-- [ ] Metas para 1 h de áudio: ≤ 10 min na RTX 3050 e ≤ 1 h só na CPU (com o modelo menor). Os tempos medidos nos três backends ficam no registro de decisões.
+- [x] Arquivos reais (MP4, MP3, M4A, WAV, OGG) viram texto pt-BR correto, em `.txt` e `.md`: trechos de 10 min de uma audiência pública da Câmara, pelo exe de release.
+- [x] O tempo para transcrever 1 h de áudio na RTX 3050 está registrado: 2 min 9 s.
+- [x] Metas para 1 h de áudio: ≤ 10 min na RTX 3050 e ≤ 1 h só na CPU (com o modelo menor). Os tempos de 1 h nos dois backends da lista (RTX e só CPU com o `small`) ficam no registro de decisões; a integrada, fora da lista desde a 4.3, fica com os números do benchmark.
 
 ### Fase 5 — Guardar áudio
 
@@ -566,6 +568,18 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-20 | Fase 4 | Toast no rodapé central (`#toasts`, `aria-live="polite"`): "Texto copiado" some em 3 s; os erros das ações (POST e DELETE do htmx, downloads) mostram o texto da resposta por 6 s, sem cor de status. Os 409 e 500 do Remover, antes silenciosos, também aparecem | O erro precisa de tempo para ser lido |
 | 2026-10-20 | Fase 4 | Design: `button-utility` com 44 px de altura (o padding de 8 px dava ~36 px, abaixo do alvo mínimo); `transcript-view` com `{rounded.lg}`; tempo do leitor como `00:00:08`, sem colchetes, na mesma linha do parágrafo. Ícones Lucide novos: copy, download, folder-open e chevron-left (lucide-static 1.59.0) | Acessibilidade (alvos de 44 × 44 px) |
 | 2026-10-20 | Fase 4 | `windows-sys` com `Win32_UI_Shell` (Lixeira). Referências visuais do E2E regeradas (dropzone sem caixinhas, rodapé, metadados), com a data do card mascarada | Reprodutibilidade |
+| 2026-10-20 | Fase 4 | Etapa 4.6: reuniões longas em blocos. A extração grava 16 kHz mono f32 cru num temporário ao lado do envio (`uploads/<id>.f32`, ~230 MB/h, apagado em qualquer desfecho; a pasta é esvaziada ao iniciar), e o `asr` lê uma janela de 30 min por vez (trait `Samples`): o VAD roda na janela, o corte cai no meio da maior pausa cujo meio está no último 1/6 (5 min), a mais tardia no empate; sem pausa ali, a última pausa da janela; sem pausa nenhuma, corte seco. Os tempos voltam ao original (`TimeMap::offset`), e o progresso de cada bloco ocupa a fatia dele | Só cortar a transcrição não bastava: com o áudio inteiro na RAM, 3 h já seriam 690 MB e 5 h, 1,15 GB. f32 e não i16 para os blocos lerem exatamente o que a extração entregou. Nos testes com bloco de 12 s, o corte seco no meio da fala trocava "sobre o cronograma" por "sobe. O Cronograma."; com o recuo para a última pausa, o texto fica igual ao sem blocos |
+| 2026-10-20 | Fase 4 | Áudio real de referência: a audiência pública da Comissão de Viação e Transportes da Câmara de 02/09/2025 (evento 78800, 3 h 13 min, MP3 de 48 kbps gerado pelo arquivo sonoro da Câmara), com as notas taquigráficas. Fora do repositório; o `ffmpeg` CLI gerou 1 h em MP3 e em MP4 (H.264 720p sintético + AAC, como uma gravação do Teams) e trechos de 10 min em MP4, MP3, M4A, WAV e OGG | Reunião de verdade, com vários falantes e texto de referência público |
+| 2026-10-20 | Fase 4 | Medições de 1 h e 3 h, build de release, na tomada e em "Melhor desempenho" (`uma_hora`/`tres_horas` em `tests/engine.rs`). 1 h (MP4): RTX 2 min 9 s (extração 1,2 s, RTF 0,036, pico de RAM 680 MB); CPU com o `small` 8 min 8 s (RTF 0,135, 1.073 MB). 1 h (MP3), repetida na CPU: 7 min 22 s (RTF 0,123, 997 MB). 3 h 13 min (MP3): RTX 5 min 55 s (extração 6 s, RTF 0,031, 631 MB); CPU 24 min 15 s (RTF 0,126, 1.139 MB). Metas cumpridas: ≤ 10 min na RTX, ≤ 1 h na CPU e pico ≤ 1,5 GB em qualquer duração | Critérios do "Pronto quando" e da meta de RAM. O "três backends" do "Pronto quando" vira "os dois da lista": a integrada saiu na 4.3, e o benchmark dela segue no registro |
+| 2026-10-20 | Fase 4 | Comparação com um bloco só (`SCRIBA_LONG_BLOCK_MIN=999`, 1 h de MP3, já com o temporário em disco): RTX 1 min 45 s e 862 MB; CPU 7 min e 1.182 MB. Os blocos de 30 min custam ~5% de tempo na CPU e cortam ~185 MB do pico em 1 h; antes da 4.6, o áudio inteiro em RAM somava mais ~230 MB por hora | A diferença de tempo entre as execuções (RTF 0,117 a 0,135 na CPU) é da mesma ordem da variação entre rodadas |
+| 2026-10-20 | Fase 4 | WER de apoio contra as notas taquigráficas, nas 3 h 13 min: 30,4% no large (RTX) e 41,0% no `small` (CPU). As notas são editadas (sem hesitações e repetições, frases reescritas; 26 mil palavras contra 28 mil transcritas): é um teto pessimista, não a taxa de erro | O texto foi conferido por leitura; o WER só compara os backends |
+| 2026-10-20 | Fase 4 | Estimativa do card: o RTF do large na GPU passa a 0,032 e o do `small` na CPU a 0,125, as médias das reuniões medidas (mais densas de fala que o FLEURS do benchmark, que dava 0,026 e 0,105); os outros modelos seguem com o benchmark. A extração entra como 0,001 s por segundo de mídia (`engine::with_extraction`): 1 h de vídeo extraída em 1,3 s e 3 h de MP3 em 6 s, com folga de ~2× | A extração ficava de fora até ser medida (4.4); é desprezível perto da transcrição |
+| 2026-10-20 | Fase 4 | `scriba-model`: o `embedded-cpu-model` (small q5_1, Silero e `fala.wav`) substitui o `embedded-test-model`; o `embedded-model` = large + o pacote da CPU. O `Models::embedded()` passa a ter o modelo da CPU: até a 4.5 o exe da release só embutia o base para o self-test, e o app dele não tinha modelo para transcrever. Exe de release com o `small`: 205 MB (antes 85 MB); o self-test transcreve a amostra em 3,1 s aqui e em 6,2 s no runner, e o `SCRIBA_SELF_TEST_MAX_SECS` cai de 20 para 15 s (sem `/O2` o `small` é ~7,7× mais lento); o `dumpbin` só lista DLLs do Windows. Versão 0.2.0 | Decisão 4 do plano da fase: release com transcrição só na CPU; large e Vulkan na Fase 7 |
+| 2026-10-20 | Fase 4 | `release.yml`: `models: small,silero` no `setup-native` (a entrada `model: true/false` virou a lista do `--only`, com a chave do cache pelo hash do `xtask/src/models.rs`, onde ficam os SHA-256), build com `embedded-cpu-model` e o tamanho do exe no log. Também roda sem publicar nos PRs que mexem na release (`release.yml`, `setup-native`, `scriba-model`) e por `workflow_dispatch`; a publicação e a conferência da tag só rodam na tag | O `workflow_dispatch` só vale depois de estar na `main`; o gatilho de PR mede o self-test no runner antes do merge |
+| 2026-10-20 | Fase 4 | `about.hbs` credita os modelos Whisper (OpenAI, MIT; conversão ggml do whisper.cpp, MIT) e o Silero VAD (MIT) | Os modelos vão dentro do exe |
+| 2026-10-20 | Fase 4 | Piso de cobertura de 85% para 90% | A `main` estava com 93,2% das linhas cobertas no CI (`lcov.info` do último run) |
+| 2026-10-20 | Fase 4 | Localmente, a suíte inteira roda com `cargo nextest run` (como o CI): com `cargo test`, os testes de whisper de um mesmo binário rodam em paralelo e as threads em espera ativa do ggml chegaram a travar o `asr` por mais de 30 min | Achado (3) do spike A, agravado pelos testes de blocos |
+| 2026-10-20 | Fase 4 | E2E "a alternância de tema persiste após recarregar": cada clique espera o `htmx:afterSettle`, porque o segundo clique chegava antes de o htmx processar o botão trocado | Intermitência vista na 4.5 |
 
 ## Referências verificadas
 

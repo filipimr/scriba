@@ -15,7 +15,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/filipimr/scriba" alt="Licença GPL-3.0"></a>
 </p>
 
-> **Em desenvolvimento.** O app já sobe a interface local e transcreve os arquivos enviados para `.txt` e `.md` na pasta Documentos\Scriba, na GPU dedicada ou no processador. Na tela, cada transcrição concluída abre no leitor, com Copiar texto, Baixar .txt e .md e Abrir pasta. O andamento fica na [tabela de status do ROADMAP](ROADMAP.md#status-das-fases).
+> **Em desenvolvimento.** A transcrição de arquivos está pronta: o app sobe a interface local e transcreve os vídeos e áudios enviados para `.txt` e `.md` na pasta Documentos\Scriba, na GPU dedicada ou no processador, inclusive reuniões de várias horas (em blocos de ~30 min, com a memória estável). Cada transcrição concluída abre no leitor, com Copiar texto, Baixar .txt e .md e Abrir pasta. Ainda faltam a pergunta "Guardar o áudio?", a gravação e o app de bandeja. O andamento fica na [tabela de status do ROADMAP](ROADMAP.md#status-das-fases).
 
 ## O que o Scriba faz
 
@@ -36,7 +36,7 @@ Tudo roda no seu computador e funciona sem internet. A interface abre no navegad
 
 ## Como usar
 
-1. Baixe o `scriba.exe` da [última release](https://github.com/filipimr/scriba/releases/latest). As releases atuais são marcos de desenvolvimento e ainda não transcrevem arquivos.
+1. Baixe o `scriba.exe` da [última release](https://github.com/filipimr/scriba/releases/latest). A partir da v0.2.0, a release transcreve no processador, com o modelo Whisper `small` embutido; a GPU e o modelo grande entram na release completa.
 2. Confira o checksum com o `scriba.exe.sha256` publicado junto:
 
    ```powershell

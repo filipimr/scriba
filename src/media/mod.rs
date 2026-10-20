@@ -1,8 +1,12 @@
 //! Mídia pelo FFmpeg estático: `probe` lê a duração, a taxa de bits e a resolução do
 //! original, e `extract_audio` entrega a melhor faixa de áudio em 16 kHz mono f32, sem
-//! decodificar o vídeo.
+//! decodificar o vídeo. `extract_audio_into` entrega o áudio aos poucos (para o [`Spool`],
+//! em disco), sem segurar a duração inteira na memória.
+
+mod spool;
 
 use std::fmt;
+use std::io;
 use std::path::Path;
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +20,8 @@ use ffmpeg_next as ffmpeg;
 
 use crate::jobs::Failure;
 
+pub use spool::Spool;
+
 /// Taxa de amostragem que o whisper espera.
 pub const SAMPLE_RATE: u32 = 16_000;
 
@@ -24,6 +30,8 @@ pub enum Error {
     NotMedia,
     NoAudio,
     Unreadable,
+    /// O áudio extraído não coube no disco.
+    Disk,
     Canceled,
 }
 
@@ -34,6 +42,9 @@ impl fmt::Display for Error {
             Self::NoAudio => "Este arquivo não tem áudio. Escolha um vídeo com som.",
             Self::Unreadable => {
                 "Não consegui ler o áudio deste arquivo. Ele pode estar corrompido."
+            }
+            Self::Disk => {
+                "Não consegui gravar o áudio temporário. Confira o espaço livre em disco e tente de novo."
             }
             Self::Canceled => "Cancelado.",
         })
@@ -126,9 +137,30 @@ fn duration_ms(ictx: &ffmpeg::format::context::Input) -> u64 {
 /// cada pacote.
 pub fn extract_audio(
     path: &Path,
-    mut progress: impl FnMut(u8),
+    progress: impl FnMut(u8),
     cancel: &AtomicBool,
 ) -> Result<Vec<f32>, Error> {
+    let mut samples = Vec::new();
+    extract_audio_into(
+        path,
+        |chunk| {
+            samples.extend_from_slice(chunk);
+            Ok(())
+        },
+        progress,
+        cancel,
+    )?;
+    Ok(samples)
+}
+
+/// Como [`extract_audio`], mas entrega as amostras a `sink` aos poucos, na ordem, e devolve
+/// quantas foram. Um erro do `sink` (disco cheio) vira [`Error::Disk`].
+pub fn extract_audio_into(
+    path: &Path,
+    mut sink: impl FnMut(&[f32]) -> io::Result<()>,
+    mut progress: impl FnMut(u8),
+    cancel: &AtomicBool,
+) -> Result<u64, Error> {
     let mut ictx = open(path)?;
     let duration_ms = duration_ms(&ictx);
     let (index, time_base, start) = {
@@ -192,15 +224,16 @@ pub fn extract_audio(
         }
         out.receive(&mut decoder)
             .map_err(|e| unreadable(path, "reamostragem", e))?;
+        out.drain(&mut sink)?;
     }
     if decoder.send_eof().is_ok() {
         out.receive(&mut decoder)
             .map_err(|e| unreadable(path, "reamostragem", e))?;
     }
-    let samples = out
-        .finish()
+    out.flush()
         .map_err(|e| unreadable(path, "reamostragem", e))?;
-    if samples.is_empty() {
+    out.drain(&mut sink)?;
+    if out.total == 0 {
         eprintln!(
             "media: {} sem amostras ({bad_packets} pacotes ruins)",
             path.display()
@@ -208,7 +241,7 @@ pub fn extract_audio(
         return Err(Error::Unreadable);
     }
     report(100);
-    Ok(samples)
+    Ok(out.total)
 }
 
 fn unreadable(path: &Path, step: &str, e: ffmpeg::Error) -> Error {
@@ -216,7 +249,8 @@ fn unreadable(path: &Path, step: &str, e: ffmpeg::Error) -> Error {
     Error::Unreadable
 }
 
-/// Recebe os frames do decoder e reamostra para 16 kHz mono f32.
+/// Recebe os frames do decoder e reamostra para 16 kHz mono f32. As amostras ficam em
+/// `samples` só até o próximo [`Decoded::drain`].
 #[derive(Default)]
 struct Decoded {
     // O resampler nasce do primeiro frame: o layout informado pelo decoder antes de
@@ -224,6 +258,8 @@ struct Decoded {
     // formato muda no meio do arquivo, ele é recriado.
     resampler: Option<resampling::Context>,
     samples: Vec<f32>,
+    /// Amostras já entregues.
+    total: u64,
 }
 
 impl Decoded {
@@ -286,8 +322,17 @@ impl Decoded {
         }
     }
 
-    fn finish(mut self) -> Result<Vec<f32>, ffmpeg::Error> {
-        self.flush()?;
-        Ok(self.samples)
+    /// Entrega ao `sink` o que já foi reamostrado.
+    fn drain(&mut self, sink: &mut impl FnMut(&[f32]) -> io::Result<()>) -> Result<(), Error> {
+        if self.samples.is_empty() {
+            return Ok(());
+        }
+        sink(&self.samples).map_err(|e| {
+            eprintln!("media: não consegui guardar o áudio extraído: {e}");
+            Error::Disk
+        })?;
+        self.total += self.samples.len() as u64;
+        self.samples.clear();
+        Ok(())
     }
 }

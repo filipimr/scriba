@@ -154,13 +154,15 @@ pub fn splice(samples: &[f32], spans: &[Range<usize>]) -> (Vec<f32>, TimeMap) {
         });
         audio.extend_from_slice(&samples[start..end]);
     }
-    (audio, TimeMap { pieces })
+    (audio, TimeMap { pieces, offset: 0 })
 }
 
 /// Leva um tempo do áudio juntado de volta para o original.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TimeMap {
     pieces: Vec<Piece>,
+    /// Onde o bloco começa no original, em amostras: somado a todo tempo devolvido.
+    offset: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -179,6 +181,11 @@ struct Piece {
 const SLIVER: usize = 4_000;
 
 impl TimeMap {
+    /// O mesmo mapa para um bloco que começa em `offset` amostras do original.
+    pub fn offset(self, offset: usize) -> Self {
+        Self { offset, ..self }
+    }
+
     /// O início e o fim de um segmento, de centésimos no áudio juntado para ms no original.
     /// Um segmento que atravessa o silêncio entre dois trechos começa no seguinte se só
     /// encosta no anterior, e termina no anterior se só encosta no seguinte: assim a pausa
@@ -203,7 +210,8 @@ impl TimeMap {
             let previous = self.pieces[m - 1];
             end = previous.from + previous.len;
         }
-        let (start, end) = ((start / PER_MS) as u64, (end / PER_MS) as u64);
+        let ms = |sample: usize| ((sample + self.offset) / PER_MS) as u64;
+        let (start, end) = (ms(start), ms(end));
         (start, end.max(start))
     }
 
@@ -326,6 +334,22 @@ mod tests {
                 (len, spans, bounds)
             })
         })
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init, reason = "um trecho de fala só")]
+    fn bloco_soma_o_proprio_inicio() {
+        let samples = ramp(100_000);
+        let (_, map) = splice(&samples, &[10_000..20_000, 60_000..70_000]);
+        let shifted = map.clone().offset(16 * 30_000);
+        for (t0, t1) in [(50, 60), (10, 110), (70, 110), (-5, 0), (150, 1_000_000)] {
+            let (start, end) = map.segment_ms(t0, t1);
+            assert_eq!(shifted.segment_ms(t0, t1), (start + 30_000, end + 30_000));
+        }
+        // Um início fora do múltiplo de 1 ms arredonda junto com o tempo do trecho.
+        assert_eq!(map.offset(8).segment_ms(50, 60), (1_125, 1_225));
+        let (_, map) = splice(&samples, &[10_008..20_000]);
+        assert_eq!(map.offset(8).segment_ms(0, 1), (626, 636));
     }
 
     proptest! {
