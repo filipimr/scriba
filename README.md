@@ -15,7 +15,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/filipimr/scriba" alt="Licença GPL-3.0"></a>
 </p>
 
-> **Em desenvolvimento.** O app já sobe a interface local e transcreve os arquivos enviados para `.txt` e `.md` na pasta Documentos\Scriba, na GPU dedicada ou no processador. O leitor da transcrição na tela chega na próxima etapa da Fase 4. O andamento fica na [tabela de status do ROADMAP](ROADMAP.md#status-das-fases).
+> **Em desenvolvimento.** O app já sobe a interface local e transcreve os arquivos enviados para `.txt` e `.md` na pasta Documentos\Scriba, na GPU dedicada ou no processador. Na tela, cada transcrição concluída abre no leitor, com Copiar texto, Baixar .txt e .md e Abrir pasta. O andamento fica na [tabela de status do ROADMAP](ROADMAP.md#status-das-fases).
 
 ## O que o Scriba faz
 

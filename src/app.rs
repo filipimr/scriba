@@ -9,6 +9,7 @@ use crate::config::Paths;
 use crate::engine::Engine;
 use crate::instance::Instance;
 use crate::jobs::{Jobs, Pipeline};
+use crate::opener::{Opener, SystemOpener};
 use crate::web::{self, AppState, SHUTDOWN_GRACE};
 
 pub struct Options {
@@ -42,12 +43,14 @@ pub fn run(opts: Options) -> anyhow::Result<()> {
         .context("preparando a pasta de uploads")?;
     let instance = Instance::new(listener.local_addr()?.port());
     instance.write(&file)?;
+    let opener = opener(&opts);
     let state = AppState::new(
         instance.token.clone(),
         instance.id.clone(),
         instance.port,
         opts.paths,
         jobs,
+        opener,
     );
     announce("Scriba em", &instance.url(), opts.open_browser);
 
@@ -75,6 +78,16 @@ fn pipeline(opts: &Options) -> Arc<dyn Pipeline> {
         return Arc::new(crate::jobs::FakePipeline::new(output_dir));
     }
     Arc::new(Engine::new(output_dir))
+}
+
+/// Com o pipeline falso, "Abrir pasta" só imprime a pasta (o E2E lê o stdout).
+fn opener(opts: &Options) -> Arc<dyn Opener> {
+    #[cfg(feature = "test-support")]
+    if opts.fake_pipeline {
+        return Arc::new(crate::opener::PrintOpener);
+    }
+    let _ = opts;
+    Arc::new(SystemOpener)
 }
 
 fn announce(prefix: &str, url: &str, open_browser: bool) {

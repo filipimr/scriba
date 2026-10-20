@@ -2,9 +2,10 @@
 //! `tower::oneshot`, e a instância única com o binário real.
 
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::body::{Body, to_bytes};
@@ -13,6 +14,8 @@ use scriba::asr::{Asr, Models};
 use scriba::config::Paths;
 use scriba::engine::Engine;
 use scriba::jobs::{Ctx, Estimate, Failure, Job, Jobs, Media, Outputs, Pipeline, Probe};
+use scriba::opener::Opener;
+use scriba::transcript::{self, Header, Segment, Transcript};
 use scriba::web::{AppState, router};
 use tower::ServiceExt;
 
@@ -24,7 +27,8 @@ const HOST: &str = "127.0.0.1:4321";
 const ORIGIN: &str = "http://127.0.0.1:4321";
 
 /// Probe pelo nome (`sem-audio` é recusado) e, no worker, `falha` falha; o resto conclui na
-/// hora com a pasta da saída criada em `out`.
+/// hora com a pasta da saída criada em `out`, com o `.txt` e o `.md` (`sem-fala`: sem
+/// parágrafos).
 struct WebPipeline {
     out: std::path::PathBuf,
 }
@@ -56,10 +60,52 @@ impl Pipeline for WebPipeline {
         }
         let dir = self.out.join(format!("pasta {}", job.name));
         std::fs::create_dir_all(&dir).unwrap();
-        Ok(Outputs {
+        let segments: Vec<Segment> = SPEECH
+            .iter()
+            .filter(|_| !job.name.contains("sem-fala"))
+            .map(|&(start_ms, end_ms, text)| Segment {
+                start_ms,
+                end_ms,
+                text: text.into(),
+            })
+            .collect();
+        let header = Header {
+            file: job.name.clone(),
+            date: job.created,
+            duration_ms: job.duration_ms,
+        };
+        let t = Transcript::new(header, &segments);
+        let outputs = Outputs {
+            txt: dir.join(transcript::TXT_FILE),
+            md: dir.join(transcript::MD_FILE),
             dir,
-            ..Outputs::default()
-        })
+        };
+        std::fs::write(&outputs.txt, transcript::render_txt(&t)).unwrap();
+        std::fs::write(&outputs.md, transcript::render_md(&t)).unwrap();
+        Ok(outputs)
+    }
+}
+
+/// Os dois parágrafos que o `WebPipeline` grava.
+const SPEECH: [(u64, u64, &str); 2] = [
+    (0, 3_000, "Bom dia & <boa> reunião."),
+    (9_000, 12_000, "Segundo parágrafo."),
+];
+
+/// "Abrir pasta" que só registra as pastas; com `fail`, devolve erro.
+#[derive(Default)]
+struct Recording {
+    opened: Mutex<Vec<PathBuf>>,
+    fail: AtomicBool,
+}
+
+impl Opener for Recording {
+    fn open(&self, dir: &Path) -> std::io::Result<()> {
+        if self.fail.load(Ordering::Relaxed) {
+            return Err(std::io::Error::other("sem Explorer"));
+        }
+        self.opened.lock().unwrap().push(dir.to_path_buf());
+        Ok(())
     }
 }
 
@@ -77,15 +123,25 @@ fn pipeline(paths: &Paths) -> Arc<WebPipeline> {
 fn state(dir: &tempfile::TempDir) -> AppState {
     let paths = paths(dir);
     let jobs = Jobs::without_worker(paths.uploads_dir(), pipeline(&paths)).unwrap();
-    AppState::new(TOKEN.into(), "inst-1".into(), PORT, paths, jobs)
+    app_state(paths, jobs, Arc::default())
+}
+
+fn app_state(paths: Paths, jobs: Jobs, opener: Arc<Recording>) -> AppState {
+    AppState::new(TOKEN.into(), "inst-1".into(), PORT, paths, jobs, opener)
 }
 
 /// Com o worker: os jobs terminam. O worker vive até o fim do teste.
 fn running_state(dir: &tempfile::TempDir) -> (AppState, scriba::jobs::Worker) {
+    let (state, worker, _) = recording_state(dir);
+    (state, worker)
+}
+
+/// Com o worker e o opener que registra.
+fn recording_state(dir: &tempfile::TempDir) -> (AppState, scriba::jobs::Worker, Arc<Recording>) {
     let paths = paths(dir);
     let (jobs, worker) = Jobs::start(paths.uploads_dir(), pipeline(&paths)).unwrap();
-    let state = AppState::new(TOKEN.into(), "inst-1".into(), PORT, paths, jobs);
-    (state, worker)
+    let opener = Arc::new(Recording::default());
+    (app_state(paths, jobs, opener.clone()), worker, opener)
 }
 
 /// O probe do pipeline real (sem modelos: o probe não transcreve).
@@ -96,7 +152,7 @@ fn engine_state(dir: &tempfile::TempDir) -> AppState {
         Asr::new(Vec::new(), Models::default()),
     );
     let jobs = Jobs::without_worker(paths.uploads_dir(), Arc::new(engine)).unwrap();
-    AppState::new(TOKEN.into(), "inst-1".into(), PORT, paths, jobs)
+    app_state(paths, jobs, Arc::default())
 }
 
 fn get(uri: &str) -> axum::http::request::Builder {
@@ -652,4 +708,215 @@ async fn remover_concluido_exige_confirmacao() {
         send(&s, get(&job).body(Body::empty()).unwrap()).await.0,
         StatusCode::NOT_FOUND
     );
+}
+// Resultado: leitor, downloads e "Abrir pasta" ----------------------------------------
+
+/// Envia um arquivo, espera concluir e devolve o id e a pasta da saída.
+async fn done_job(s: &AppState, dir: &tempfile::TempDir, name: &str) -> (String, PathBuf) {
+    let (_, _, body) = send(s, post_jobs(&[("arquivo", Some(name), b"x")])).await;
+    let id = card_ids(&body).remove(0);
+    let card = final_card(s, &id).await;
+    assert!(card.contains("Concluído"), "{card}");
+    (id, dir.path().join("saidas").join(format!("pasta {name}")))
+}
+
+async fn get_page(s: &AppState, uri: &str) -> (StatusCode, axum::http::HeaderMap, String) {
+    send(s, get(uri).body(Body::empty()).unwrap()).await
+}
+
+#[tokio::test]
+async fn card_concluido_tem_as_acoes_do_resultado() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, _worker) = running_state(&dir);
+    let (_, _, body) = send(&s, post_jobs(&[("arquivo", Some("Reunião.mp4"), b"x")])).await;
+    let id = card_ids(&body).remove(0);
+    let card = final_card(&s, &id).await;
+    for part in [
+        format!(r#"href="/jobs/{id}""#),
+        format!(r#"href="/api/jobs/{id}/transcricao.txt" download="Reunião - transcrição.txt""#),
+        format!(r#"href="/api/jobs/{id}/transcricao.md" download="Reunião - transcrição.md""#),
+        format!(r#"hx-post="/api/jobs/{id}/open""#),
+    ] {
+        assert!(card.contains(&part), "{part}\n{card}");
+    }
+}
+
+#[tokio::test]
+async fn leitor_mostra_a_transcricao_do_disco() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, _worker) = running_state(&dir);
+    let (id, folder) = done_job(&s, &dir, "reuniao.mp4").await;
+
+    let (status, headers, page) = get_page(&s, &format!("/jobs/{id}")).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        headers[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html")
+    );
+    assert!(
+        page.contains("<title>reuniao.mp4 · Scriba</title>"),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<h1 id="transcricao-titulo" class="transcript-title">reuniao.mp4</h1>"#)
+    );
+    assert!(
+        page.contains(r#"<span class="transcript-timestamp">00:00:09</span> Segundo parágrafo."#),
+        "{page}"
+    );
+    assert!(page.contains("reunião."), "{page}");
+    assert!(!page.contains("<boa>"), "o texto é escapado: {page}");
+    // O `.txt` inteiro vai no <template> do Copiar.
+    let txt = std::fs::read_to_string(folder.join(transcript::TXT_FILE)).unwrap();
+    assert!(txt.starts_with("Arquivo: reuniao.mp4\r\n"), "{txt}");
+    assert!(
+        page.contains(r#"<template id="texto-transcricao">Arquivo: reuniao.mp4"#),
+        "{page}"
+    );
+
+    // Sem fala: o estado vazio, com as ações.
+    let (empty, _) = done_job(&s, &dir, "sem-fala.wav").await;
+    let (status, _, page) = get_page(&s, &format!("/jobs/{empty}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        page.contains("Nenhuma fala encontrada neste arquivo."),
+        "{page}"
+    );
+    assert!(page.contains("Copiar texto"), "{page}");
+
+    // `.txt` apagado fora do app: o alerta, sem as ações.
+    std::fs::remove_file(folder.join(transcript::TXT_FILE)).unwrap();
+    let (status, _, page) = get_page(&s, &format!("/jobs/{id}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("Não encontrei a transcrição em "), "{page}");
+    assert!(page.contains("pasta reuniao.mp4."), "{page}");
+    assert!(!page.contains("Copiar texto"), "{page}");
+
+    // Fora da lista, ou ainda não concluído: 404 com a página.
+    let (_, _, body) = send(&s, post_jobs(&[("arquivo", Some("falha.wav"), b"x")])).await;
+    let failed = card_ids(&body).remove(0);
+    final_card(&s, &failed).await;
+    for uri in [
+        "/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0".to_string(),
+        "/jobs/x".to_string(),
+        format!("/jobs/{failed}"),
+    ] {
+        let (status, _, page) = get_page(&s, &uri).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+        assert!(
+            page.contains("Não encontrei esta transcrição na lista de Recentes."),
+            "{page}"
+        );
+    }
+
+    // Sem o cookie, como toda rota.
+    let res = router(s.clone())
+        .oneshot(
+            Request::get(format!("/jobs/{id}"))
+                .header(header::HOST, HOST)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn downloads_do_txt_e_do_md() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, _worker) = running_state(&dir);
+    let (id, folder) = done_job(&s, &dir, "Reunião.mp4").await;
+
+    let cases = [
+        ("txt", transcript::TXT_FILE, "text/plain; charset=utf-8"),
+        ("md", transcript::MD_FILE, "text/markdown; charset=utf-8"),
+    ];
+    for (ext, file, mime) in cases {
+        let uri = format!("/api/jobs/{id}/transcricao.{ext}");
+        let (status, headers, body) = get_page(&s, &uri).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(headers[header::CONTENT_TYPE], mime);
+        assert_eq!(
+            headers[header::CONTENT_DISPOSITION],
+            format!(
+                "attachment; filename=\"transcricao.{ext}\"; \
+                 filename*=UTF-8''Reuni%C3%A3o%20-%20transcri%C3%A7%C3%A3o.{ext}"
+            )
+        );
+        assert_eq!(body, std::fs::read_to_string(folder.join(file)).unwrap());
+    }
+    let (_, _, md) = get_page(&s, &format!("/api/jobs/{id}/transcricao.md")).await;
+    assert!(md.starts_with("# Reunião.mp4\n"), "{md}");
+    assert!(md.contains("**[00:00:09]** Segundo parágrafo."), "{md}");
+
+    // Arquivo apagado fora do app: 404 com a mensagem do toast.
+    std::fs::remove_file(folder.join(transcript::MD_FILE)).unwrap();
+    let (status, _, body) = get_page(&s, &format!("/api/jobs/{id}/transcricao.md")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        body,
+        "Não encontrei a transcrição na pasta “pasta Reunião.mp4”. Ela foi movida ou apagada."
+    );
+    for uri in [
+        "/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/transcricao.txt".to_string(),
+        "/api/jobs/x/transcricao.md".to_string(),
+        format!("/api/jobs/{id}/transcricao.pdf"),
+    ] {
+        assert_eq!(get_page(&s, &uri).await.0, StatusCode::NOT_FOUND, "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn abrir_pasta_chama_o_opener_com_a_pasta_do_job() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, _worker, opener) = recording_state(&dir);
+    let (id, folder) = done_job(&s, &dir, "reuniao.mp4").await;
+    let open = format!("/api/jobs/{id}/open");
+
+    let (status, _, body) = send(&s, with_origin(Request::post(&open))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(
+        *opener.opened.lock().unwrap(),
+        std::slice::from_ref(&folder)
+    );
+
+    // Sem Origin, como todo POST.
+    let res = router(s.clone())
+        .oneshot(
+            Request::post(&open)
+                .header(header::HOST, HOST)
+                .header(header::COOKIE, format!("scriba_token={TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    opener.fail.store(true, Ordering::Relaxed);
+    let (status, _, body) = send(&s, with_origin(Request::post(&open))).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body, "Não consegui abrir a pasta.");
+    opener.fail.store(false, Ordering::Relaxed);
+
+    // Pasta apagada fora do app: a mensagem, sem chamar o opener.
+    std::fs::remove_dir_all(&folder).unwrap();
+    let (status, _, body) = send(&s, with_origin(Request::post(&open))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        body,
+        "Não encontrei a pasta “pasta reuniao.mp4”. Ela foi movida ou apagada."
+    );
+    assert_eq!(opener.opened.lock().unwrap().len(), 1);
+
+    for uri in [
+        "/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/open",
+        "/api/jobs/x/open",
+    ] {
+        let (status, _, _) = send(&s, with_origin(Request::post(uri))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+    }
 }

@@ -17,6 +17,17 @@
     {%- if let Some(error) = job.error %}
     <p class="alert-inline">{% include "icons/circle-alert.svg" %}<span>{{ error }}</span></p>
     {%- endif %}
+    {%- if let Some(done) = job.done %}
+    <div class="job-card-actions">
+      <a class="btn btn-primary" href="/jobs/{{ job.id }}" aria-label="Ver transcrição de {{ job.name }}">Ver transcrição</a>
+      <a class="btn btn-secondary" href="/api/jobs/{{ job.id }}/transcricao.txt" download="{{ done.txt_name }}" aria-label="Baixar .txt de {{ job.name }}">
+        {%- include "icons/download.svg" %}Baixar .txt</a>
+      <a class="btn btn-secondary" href="/api/jobs/{{ job.id }}/transcricao.md" download="{{ done.md_name }}" aria-label="Baixar .md de {{ job.name }}">
+        {%- include "icons/download.svg" %}Baixar .md</a>
+      <button class="btn btn-utility" type="button" hx-post="/api/jobs/{{ job.id }}/open" hx-swap="none" aria-label="Abrir pasta de {{ job.name }}">
+        {%- include "icons/folder-open.svg" %}Abrir pasta</button>
+    </div>
+    {%- endif %}
     {%- if job.retry %}
     <div class="job-card-actions">
       <button class="btn btn-secondary" type="button"
@@ -33,7 +44,7 @@
   </button>
   {%- else %}
   <button id="acao-{{ job.id }}" class="btn-icon" type="button" aria-label="Remover {{ job.name }}" title="Remover"
-    {%- if let Some(folder) = job.folder %} hx-delete="/api/jobs/{{ job.id }}?confirm=1" hx-confirm="A pasta “{{ folder }}” vai para a Lixeira."
+    {%- if let Some(done) = job.done %} hx-delete="/api/jobs/{{ job.id }}?confirm=1" hx-confirm="A pasta “{{ done.folder }}” vai para a Lixeira."
     {%- else %} hx-delete="/api/jobs/{{ job.id }}"{% endif %} hx-target="#job-{{ job.id }}" hx-swap="outerHTML" hx-sync="#job-{{ job.id }}:replace">
     {%- include "icons/trash-2.svg" -%}
   </button>

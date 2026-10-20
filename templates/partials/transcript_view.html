@@ -1,0 +1,36 @@
+<article class="transcript-view max-md:p-md" aria-labelledby="transcricao-titulo">
+  <a class="text-link" href="/">{% include "icons/chevron-left.svg" %}Recentes</a>
+  <h1 id="transcricao-titulo" class="transcript-title">{{ view.title }}</h1>
+  {%- if let Some(job) = view.job %}
+  <p class="transcript-meta">{% if let Some(duration) = job.duration %}{{ duration }} · {% endif %}{{ job.size }} · <span class="transcript-date">{{ job.date }}</span></p>
+  {%- endif %}
+  {%- if let Some(alert) = view.alert %}
+  <p class="alert-inline">{% include "icons/circle-alert.svg" %}<span>{{ alert }}</span></p>
+  {%- endif %}
+  {%- if let Some(t) = view.loaded %}
+  <div class="transcript-actions">
+    <button class="btn btn-primary" type="button" data-copiar="texto-transcricao">
+      {%- include "icons/copy.svg" %}Copiar texto</button>
+    <a class="btn btn-secondary" href="/api/jobs/{{ t.id }}/transcricao.txt" download="{{ t.txt_name }}">
+      {%- include "icons/download.svg" %}Baixar .txt</a>
+    <a class="btn btn-secondary" href="/api/jobs/{{ t.id }}/transcricao.md" download="{{ t.md_name }}">
+      {%- include "icons/download.svg" %}Baixar .md</a>
+    <button class="btn btn-utility" type="button" hx-post="/api/jobs/{{ t.id }}/open" hx-swap="none">
+      {%- include "icons/folder-open.svg" %}Abrir pasta</button>
+  </div>
+  {#- O conteúdo do .txt para o Copiar: a CSP proíbe script inline. #}
+  <template id="texto-transcricao">{{ t.text }}</template>
+  {%- if t.paragraphs.is_empty() %}
+  <div class="empty-state">
+    {% include "icons/inbox.svg" %}
+    <p>Nenhuma fala encontrada neste arquivo.</p>
+  </div>
+  {%- else %}
+  <div class="transcript-text">
+    {%- for p in t.paragraphs %}
+    <p class="transcript-paragraph">{% if let Some(time) = p.time %}<span class="transcript-timestamp">{{ time }}</span> {% endif %}{{ p.text }}</p>
+    {%- endfor %}
+  </div>
+  {%- endif %}
+  {%- endif %}
+</article>

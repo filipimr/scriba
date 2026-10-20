@@ -79,6 +79,11 @@
     cursor: pointer;
     transition: transform var(--motion-duration-fast) var(--motion-easing);
   }
+  /* Ícone junto do texto: 20 px com body, 16 px com caption (button-utility). */
+  .btn .lucide {
+    width: 20px;
+    height: 20px;
+  }
   .btn-primary {
     background: var(--color-primary);
     color: var(--color-on-primary);
@@ -94,6 +99,28 @@
     background: transparent;
     color: var(--color-link);
     border: 1px solid var(--color-link);
+  }
+  /* Ação compacta de baixa ênfase ("Abrir pasta"); a altura de 44 px vem do .btn. */
+  .btn-utility {
+    @apply text-caption;
+    gap: var(--spacing-xxs);
+    padding: 8px 15px;
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-dark);
+    color: var(--color-on-dark);
+  }
+  .btn-utility .lucide {
+    width: 16px;
+    height: 16px;
+  }
+  .text-link {
+    @apply inline-flex items-center gap-xxs self-start text-body;
+    min-height: 44px;
+    color: var(--color-link);
+  }
+  .text-link .lucide {
+    width: 20px;
+    height: 20px;
   }
   /* Só dentro do confirm-dialog, para a ação destrutiva já pedida. */
   .btn-danger {
@@ -320,11 +347,13 @@
     box-shadow: var(--shadow-floating);
   }
   /* A sombra quase some sobre preto: no escuro, a borda hairline marca a borda. */
-  [data-theme="dark"] .confirm-dialog {
+  [data-theme="dark"] .confirm-dialog,
+  [data-theme="dark"] .toast {
     border-color: var(--color-hairline);
   }
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .confirm-dialog {
+    :root:not([data-theme="light"]) .confirm-dialog,
+    :root:not([data-theme="light"]) .toast {
       border-color: var(--color-hairline);
     }
   }
@@ -347,6 +376,65 @@
       opacity: 0;
       transform: scale(0.97);
     }
+  }
+
+  /* Toasts no rodapé central: a região fica sempre na página para o aria-live funcionar. */
+  .toast-region {
+    @apply fixed inset-x-0 z-20 flex justify-center;
+    bottom: var(--spacing-xl);
+    padding-inline: var(--spacing-md);
+    pointer-events: none;
+  }
+  .toast {
+    @apply rounded-md text-callout;
+    max-width: 560px;
+    padding: 12px 20px;
+    overflow-wrap: anywhere;
+    background: var(--color-surface-dark);
+    color: var(--color-on-dark);
+    border: 1px solid transparent;
+    box-shadow: var(--shadow-floating);
+    animation: toast-in var(--motion-duration-base) var(--motion-easing);
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+
+  .transcript-view {
+    @apply mx-auto flex flex-col rounded-lg;
+    max-width: 720px;
+    padding: var(--spacing-xxl);
+    background: var(--color-canvas);
+    color: var(--color-ink);
+  }
+  .transcript-title {
+    @apply mt-xs text-title;
+    overflow-wrap: anywhere;
+  }
+  .transcript-meta {
+    @apply mt-xs text-caption tabular-nums;
+    color: var(--color-ink-secondary);
+  }
+  .transcript-view > .alert-inline {
+    margin-top: var(--spacing-lg);
+  }
+  .transcript-actions {
+    @apply mt-lg flex flex-wrap gap-xs;
+  }
+  .transcript-text {
+    @apply mt-xl flex flex-col gap-md text-transcript;
+  }
+  /* Texto fora do formato mantém as quebras de linha do .txt. */
+  .transcript-paragraph {
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+  }
+  .transcript-timestamp {
+    @apply text-timestamp tabular-nums;
+    color: var(--color-ink-secondary);
   }
 
   .empty-state {
