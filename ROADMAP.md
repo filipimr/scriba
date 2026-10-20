@@ -14,7 +14,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | 3 | Fila de jobs e upload | Concluída |
 | 3.5 | Build nativo mais rápido | Concluída |
 | 4 | Transcrição de arquivos (MVP) | Concluída |
-| 5 | Guardar áudio | Não iniciada |
+| 5 | Guardar áudio | Em andamento |
 | 6 | Gravação ao vivo | Não iniciada |
 | 7 | Robustez, empacotamento e entrega final | Não iniciada |
 
