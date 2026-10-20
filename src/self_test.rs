@@ -1,6 +1,6 @@
-//! `scriba --self-test`: prova, no exe de release, que o modelo e o VAD carregam da memória,
-//! que o pipeline do app (`media` + `asr`) transcreve pt-BR em CPU e que o FFmpeg estático
-//! codifica H.264.
+//! `scriba --self-test`: prova, no exe de release, que o modelo da CPU e o VAD carregam da
+//! memória, que o pipeline do app (`media` + `asr`) transcreve pt-BR em CPU e que o FFmpeg
+//! estático codifica H.264.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -13,7 +13,7 @@ use ffmpeg::util::frame;
 use ffmpeg::{Dictionary, Rational, codec, encoder};
 use ffmpeg_next as ffmpeg;
 
-use crate::asr::{self, Asr, Model, Models, Plan, Source};
+use crate::asr::{Asr, Model, Models, Plan, Source};
 use crate::media;
 
 /// Palavras ditas na amostra `tests/fixtures/fala.wav`.
@@ -32,6 +32,8 @@ const MIN_HITS: usize = 3;
 pub const MAX_SECS_VAR: &str = "SCRIBA_SELF_TEST_MAX_SECS";
 
 pub struct Report {
+    /// O modelo que transcreveu: o da CPU (`small`) na release.
+    pub model: &'static str,
     pub text: String,
     pub transcribe: Duration,
     pub encode: Duration,
@@ -43,7 +45,8 @@ impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "transcrição {:.1?}, x264 {:.1?} → {}\nwhisper.cpp: {}",
+            "transcrição ({}) {:.1?}, x264 {:.1?} → {}\nwhisper.cpp: {}",
+            self.model,
             self.transcribe,
             self.encode,
             self.text.trim(),
@@ -52,30 +55,21 @@ impl fmt::Display for Report {
     }
 }
 
-/// Usa o modelo, o VAD e a amostra embutidos; sem a feature `embedded-test-model`, lê de
-/// `models/` e `tests/fixtures/` do repositório. Falha se a transcrição passar do limite
-/// de [`MAX_SECS_VAR`], quando definido.
+/// Usa o modelo da CPU, o VAD e a amostra embutidos; sem a feature `embedded-cpu-model`,
+/// lê de `models/` (o `small` ou, sem ele, o `base`, como no CI) e de `tests/fixtures/`.
+/// Falha se a transcrição passar do limite de [`MAX_SECS_VAR`], quando definido.
 pub fn run_default() -> anyhow::Result<Report> {
-    let report = match (
-        scriba_model::TEST_WHISPER,
-        scriba_model::VAD,
-        scriba_model::TEST_SAMPLE,
-    ) {
-        (Some(model), Some(vad), Some(sample)) => {
-            run(Source::Embedded(model), Source::Embedded(vad), sample)?
-        }
+    let embedded = Models::embedded();
+    let report = match (embedded.cpu, embedded.vad, scriba_model::TEST_SAMPLE) {
+        (Some(model), Some(vad), Some(sample)) => run(model, vad, sample)?,
         _ => {
             let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-            let file = |name: &str| {
-                let path = root.join("models").join(name);
-                ensure!(
-                    path.is_file(),
-                    "{name} não embutido: rode `cargo xtask model --only base,silero`"
-                );
-                Ok(Source::File(path))
+            let dev = Models::from_dir(&root.join("models"));
+            let (Some(model), Some(vad)) = (dev.cpu, dev.vad) else {
+                bail!("modelos não embutidos: rode `cargo xtask model --only small,silero`");
             };
             let sample = std::fs::read(root.join("tests/fixtures/fala.wav"))?;
-            run(file(asr::BASE_FILE)?, file(asr::VAD_FILE)?, &sample)?
+            run(model, vad, &sample)?
         }
     };
     check_limit(
@@ -101,9 +95,9 @@ fn check_limit(transcribe: Duration, max_secs: Option<&str>) -> anyhow::Result<(
     Ok(())
 }
 
-/// Transcreve `sample` (qualquer formato que o FFmpeg leia) com o modelo base na CPU e
-/// codifica um clipe x264.
-pub fn run(model: Source, vad: Source, sample: &[u8]) -> anyhow::Result<Report> {
+/// Transcreve `sample` (qualquer formato que o FFmpeg leia) com `model` na CPU e codifica um
+/// clipe x264.
+pub fn run(model: Model, vad: Source, sample: &[u8]) -> anyhow::Result<Report> {
     let input = temp_path("scriba-self-test.wav");
     std::fs::write(&input, sample)?;
     let never = AtomicBool::new(false);
@@ -111,12 +105,10 @@ pub fn run(model: Source, vad: Source, sample: &[u8]) -> anyhow::Result<Report> 
     let _ = std::fs::remove_file(&input);
     let audio = audio?;
 
+    let name = model.name;
     let models = Models {
         large: None,
-        cpu: Some(Model {
-            name: "base",
-            source: model,
-        }),
+        cpu: Some(model),
         vad: Some(vad),
     };
     let t0 = Instant::now();
@@ -143,6 +135,7 @@ pub fn run(model: Source, vad: Source, sample: &[u8]) -> anyhow::Result<Report> 
         "clipe x264 com {secs:.2} s, esperado 1 s"
     );
     Ok(Report {
+        model: name,
         text,
         transcribe,
         encode: t1.elapsed(),
@@ -231,11 +224,11 @@ mod tests {
 
     #[test]
     fn amostra_que_nao_e_audio_falha() {
-        let Err(err) = run(
-            Source::Embedded(b""),
-            Source::Embedded(b""),
-            b"isto nao e audio",
-        ) else {
+        let model = Model {
+            name: "small",
+            source: Source::Embedded(b""),
+        };
+        let Err(err) = run(model, Source::Embedded(b""), b"isto nao e audio") else {
             panic!("bytes que não são áudio passaram");
         };
         assert!(err.to_string().contains("Não reconheci"), "{err}");
@@ -244,13 +237,17 @@ mod tests {
     #[test]
     fn report_mostra_texto_tempos_e_recursos_da_cpu() {
         let r = Report {
+            model: "small",
             text: " bom dia ".into(),
             transcribe: Duration::from_millis(1500),
             encode: Duration::from_millis(200),
             system: "CPU : AVX2 = 1 | ",
         };
         let s = r.to_string();
-        assert!(s.contains("bom dia") && s.contains("x264"), "{s}");
+        assert!(
+            s.contains("(small)") && s.contains("bom dia") && s.contains("x264"),
+            "{s}"
+        );
         assert!(s.ends_with("whisper.cpp: CPU : AVX2 = 1 |"), "{s}");
     }
 

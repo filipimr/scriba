@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../fixtures";
 
 test("a página inicial carrega", async ({ page, scriba }) => {
@@ -28,16 +29,28 @@ for (const scheme of ["light", "dark"] as const) {
   });
 }
 
+/** Clica e espera o htmx assentar a troca: o botão novo só responde depois de processado. */
+async function clickAndSettle(page: Page, name: string) {
+  const settled = page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        document.body.addEventListener("htmx:afterSettle", () => resolve(), { once: true }),
+      ),
+  );
+  await page.getByRole("button", { name }).click();
+  await settled;
+}
+
 test("a alternância de tema persiste após recarregar", async ({ page, scriba }) => {
   await page.goto(scriba.url);
   const html = page.locator("html");
   await expect(html).not.toHaveAttribute("data-theme");
 
-  await page.getByRole("button", { name: "Tema: Sistema" }).click();
+  await clickAndSettle(page, "Tema: Sistema");
   await expect(page.getByRole("button", { name: "Tema: Claro" })).toBeVisible();
   await expect(html).toHaveAttribute("data-theme", "light");
 
-  await page.getByRole("button", { name: "Tema: Claro" }).click();
+  await clickAndSettle(page, "Tema: Claro");
   await expect(html).toHaveAttribute("data-theme", "dark");
 
   await page.reload();

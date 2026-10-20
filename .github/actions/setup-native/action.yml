@@ -1,16 +1,17 @@
 name: setup-native
 description: >
-  Rust fixado, FFmpeg estático do vcpkg (com cache), cache do Cargo e os modelos de teste
-  (base e VAD).
+  Rust fixado, FFmpeg estático do vcpkg (com cache), cache do Cargo e os modelos pedidos
+  (base e VAD nos testes; small e VAD na release).
   O target dir fica curto (C:\t): o build do whisper.cpp estoura MAX_PATH no repositório.
 
 inputs:
   tools:
     description: Ferramentas cargo extras via taiki-e/install-action (separadas por vírgula).
     default: ""
-  model:
-    description: Baixa o modelo base q5_1 e o VAD Silero para models/.
-    default: "true"
+  models:
+    description: >
+      Modelos para models/, como no `cargo xtask model --only` (vírgulas); vazio não baixa.
+    default: "base,silero"
 
 runs:
   using: composite
@@ -65,18 +66,16 @@ runs:
       with:
         tool: ${{ inputs.tools }}
 
-    # A chave leva o SHA-256 de cada arquivo: trocar um modelo invalida o cache.
-    - name: Cache dos modelos (base e VAD)
-      if: inputs.model == 'true'
+    # O xtask/src/models.rs guarda o SHA-256 de cada modelo: trocar um invalida a chave.
+    - name: Cache dos modelos (${{ inputs.models }})
+      if: inputs.models != ''
       id: model-cache
       uses: actions/cache@v4
       with:
-        path: |
-          models/ggml-base-q5_1.bin
-          models/ggml-silero-v6.2.0.bin
-        key: models-base-q5_1-422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898-silero-v6.2.0-2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987
+        path: models/ggml-*.bin
+        key: models-${{ inputs.models }}-${{ hashFiles('xtask/src/models.rs') }}
 
     - name: Baixar os modelos
-      if: inputs.model == 'true' && steps.model-cache.outputs.cache-hit != 'true'
+      if: inputs.models != '' && steps.model-cache.outputs.cache-hit != 'true'
       shell: pwsh
-      run: cargo xtask model --only base,silero
+      run: cargo xtask model --only "${{ inputs.models }}"

@@ -3,6 +3,14 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Fora da tag, build, self-test e dumpbin sem publicar nada: no PR que mexe na release e
+  # sob demanda (`gh workflow run release.yml --ref <branch>`).
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/actions/setup-native/**
+      - crates/scriba-model/**
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -17,8 +25,10 @@ jobs:
       - uses: ./.github/actions/setup-native
         with:
           tools: cargo-about
+          models: small,silero
 
       - name: Tag confere com a versão do Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
           $meta = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
@@ -32,10 +42,10 @@ jobs:
       - name: Limpar o whisper.cpp do cache
         run: cargo clean -p whisper-rs-sys --release
 
-      # Fase 1: modelo base embutido para o self-test em CPU. O modelo grande e o
-      # Vulkan entram na Fase 7.
+      # O modelo da CPU (small) embutido: o app transcreve no processador e o self-test o
+      # usa. O modelo grande e o Vulkan entram na Fase 7.
       - name: Build
-        run: cargo build --release --features embedded-test-model
+        run: cargo build --release --features embedded-cpu-model
 
       - name: Smoke test
         shell: pwsh
@@ -64,7 +74,12 @@ jobs:
           "$hash  scriba.exe" | Out-File -Encoding ascii scriba.exe.sha256
           cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
 
+      - name: Tamanho do exe
+        shell: pwsh
+        run: '"{0:N0} MB" -f ((Get-Item scriba.exe).Length / 1MB)'
+
       - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           generate_release_notes: true
           files: |

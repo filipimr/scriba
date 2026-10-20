@@ -47,7 +47,7 @@ jobs:
         run: >
           cargo llvm-cov nextest --workspace --profile ci --features scriba/test-support
           --ignore-filename-regex "crates[/\\\\]spikes|xtask"
-          --fail-under-lines 85
+          --fail-under-lines 90
           --lcov --output-path lcov.info
 
       - name: Relatório de testes

@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-# Embute o modelo no binário (só no release; o dev carrega de models/).
-embedded-model = []
-# Modelo base + VAD + amostra para o `scriba --self-test` da release.
-embedded-test-model = []
+# O modelo da CPU (small) + VAD + amostra do `scriba --self-test`: a release atual.
+embedded-cpu-model = []
+# Tudo: o large para as GPUs mais o pacote da CPU (a release completa da Fase 7).
+embedded-model = ["embedded-cpu-model"]
