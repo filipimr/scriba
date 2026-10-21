@@ -15,7 +15,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::DefaultBodyLimit;
+use axum::extract::{DefaultBodyLimit, State};
+use axum::http::StatusCode;
 use axum::middleware::from_fn_with_state;
 use axum::routing::{get, post};
 
@@ -24,6 +25,7 @@ use crate::config::{Config, Paths};
 use crate::dialog::SaveDialog;
 use crate::jobs::Jobs;
 use crate::opener::Opener;
+use crate::shutdown::{Reason, Shutdown};
 
 /// Quanto o encerramento espera as requisições em andamento (um upload longo, por exemplo).
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
@@ -43,6 +45,8 @@ pub struct Inner {
     pub dialog: Arc<dyn SaveDialog>,
     /// A gravação ao vivo.
     pub recorder: Recorder,
+    /// O pedido de encerramento (a rota de saída, a bandeja, o Ctrl+C).
+    pub shutdown: Shutdown,
     config: Mutex<Config>,
     /// O app está fechando: o SSE dos medidores termina.
     closing: AtomicBool,
@@ -86,6 +90,7 @@ impl AppState {
             opener,
             dialog,
             recorder,
+            shutdown: Shutdown::new(),
             config: Mutex::new(config),
             closing: AtomicBool::new(false),
         }))
@@ -148,11 +153,19 @@ pub fn router(state: AppState) -> Router {
             "/api/record/devices",
             get(record::devices).post(record::choose),
         )
+        .route("/api/app/sair", post(quit))
         .route("/jobs/{id}", get(reader::page))
         .route("/health", get(pages::health))
         .route("/assets/{*path}", get(assets::serve))
         .layer(from_fn_with_state(state.clone(), security::guard))
         .with_state(state)
+}
+
+/// `POST /api/app/sair`: fecha o app como o "Sair" da bandeja, sem perguntar (o smoke da
+/// release, o Sandbox e os testes).
+async fn quit(State(state): State<AppState>) -> StatusCode {
+    state.shutdown.request(Reason::Route);
+    StatusCode::NO_CONTENT
 }
 
 /// Abre a porta preferida em 127.0.0.1; se estiver ocupada, uma porta livre qualquer.
@@ -169,18 +182,31 @@ pub async fn serve(
     shutdown: impl Future<Output = ()> + Send + 'static,
     grace: Duration,
 ) -> std::io::Result<()> {
+    serve_until(listener, state, async move {
+        shutdown.await;
+        grace
+    })
+    .await
+}
+
+/// Como [`serve`], mas a folga vem de `shutdown`: o fim da sessão do Windows não espera.
+pub async fn serve_until(
+    listener: TcpListener,
+    state: AppState,
+    shutdown: impl Future<Output = Duration> + Send + 'static,
+) -> std::io::Result<()> {
     listener.set_nonblocking(true)?;
     let listener = tokio::net::TcpListener::from_std(listener)?;
-    let (signaled, deadline) = tokio::sync::oneshot::channel::<()>();
+    let (signaled, deadline) = tokio::sync::oneshot::channel::<Duration>();
     let server = axum::serve(listener, router(state)).with_graceful_shutdown(async move {
-        shutdown.await;
-        let _ = signaled.send(());
+        let grace = shutdown.await;
+        let _ = signaled.send(grace);
     });
     tokio::select! {
         result = server.into_future() => result,
         () = async move {
             match deadline.await {
-                Ok(()) => tokio::time::sleep(grace).await,
+                Ok(grace) => tokio::time::sleep(grace).await,
                 // O servidor terminou sozinho (erro): o outro braço responde.
                 Err(_) => std::future::pending().await,
             }

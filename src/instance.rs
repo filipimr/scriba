@@ -5,9 +5,11 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
+use windows_sys::Win32::System::Threading::CreateMutexW;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Instance {
@@ -55,6 +57,78 @@ impl Instance {
     /// programa na porta dá `false`.
     pub fn is_alive(&self) -> bool {
         probe(self.port).is_some_and(|id| id == self.id)
+    }
+}
+
+/// O mutex nomeado da pasta de dados: quem o cria é a instância que serve. Fica com o
+/// processo até ele terminar (o Windows o solta mesmo num crash).
+pub struct Lock(HANDLE);
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        // SAFETY: o handle é nosso e não foi fechado.
+        unsafe { CloseHandle(self.0) };
+    }
+}
+
+pub enum Claim {
+    /// Esta execução serve.
+    Mine(Lock),
+    /// Outra execução na mesma pasta de dados já serve (ou está abrindo).
+    Taken,
+}
+
+/// Tenta ser a instância da pasta de dados. Duas aberturas ao mesmo tempo não sobem dois
+/// servidores (os dois esvaziariam `uploads/`); pastas diferentes (os E2E em paralelo) não
+/// se atrapalham.
+pub fn claim(data_dir: &Path) -> std::io::Result<Claim> {
+    let name: Vec<u16> = mutex_name(data_dir).encode_utf16().chain(Some(0)).collect();
+    // SAFETY: o nome termina em zero; o handle devolvido é nosso.
+    let (handle, error) = unsafe {
+        let h = CreateMutexW(std::ptr::null(), 0, name.as_ptr());
+        (h, GetLastError())
+    };
+    if handle.is_null() {
+        return Err(std::io::Error::from_raw_os_error(error as i32));
+    }
+    let lock = Lock(handle);
+    Ok(if error == ERROR_ALREADY_EXISTS {
+        Claim::Taken
+    } else {
+        Claim::Mine(lock)
+    })
+}
+
+/// `Local\Scriba-<hash>`: o hash do caminho absoluto, sem diferença de maiúsculas (o NTFS
+/// não diferencia) nem da barra no fim.
+pub fn mutex_name(data_dir: &Path) -> String {
+    let path = std::path::absolute(data_dir).unwrap_or_else(|_| data_dir.to_path_buf());
+    let text = path.to_string_lossy().to_lowercase().replace('/', "\\");
+    format!(
+        "Local\\Scriba-{:016x}",
+        fnv1a(text.trim_end_matches('\\').as_bytes())
+    )
+}
+
+/// FNV-1a de 64 bits: estável entre versões do Rust (o `DefaultHasher` não é).
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+/// Espera até `timeout` a instância de `path` responder no `/health` (a outra execução pode
+/// estar abrindo agora).
+pub fn wait_alive(path: &Path, timeout: Duration) -> Option<Instance> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(found) = Instance::read(path).filter(Instance::is_alive) {
+            return Some(found);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -115,6 +189,39 @@ mod tests {
         assert!(path.exists());
         mine.remove(&path);
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn mutex_por_pasta_de_dados() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        let first = claim(&a).unwrap();
+        assert!(matches!(first, Claim::Mine(_)));
+        assert!(matches!(claim(&a).unwrap(), Claim::Taken));
+        // A mesma pasta escrita de outro jeito é a mesma instância.
+        let upper = format!("{}\\", a.to_string_lossy().to_uppercase());
+        assert!(matches!(claim(Path::new(&upper)).unwrap(), Claim::Taken));
+        assert!(matches!(claim(&b).unwrap(), Claim::Mine(_)));
+        drop(first);
+        assert!(matches!(claim(&a).unwrap(), Claim::Mine(_)));
+    }
+
+    #[test]
+    fn nome_do_mutex() {
+        let name = mutex_name(Path::new(r"C:\Dados\Scriba"));
+        assert!(name.starts_with(r"Local\Scriba-"), "{name}");
+        assert_eq!(name.len(), r"Local\Scriba-".len() + 16);
+        assert_eq!(name, mutex_name(Path::new("c:/dados/scriba/")));
+        assert_ne!(name, mutex_name(Path::new(r"C:\Dados\Outro")));
+    }
+
+    #[test]
+    fn espera_quem_nao_responde_ate_o_prazo() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("instance.json");
+        let started = Instant::now();
+        assert_eq!(wait_alive(&path, Duration::from_millis(250)), None);
+        assert!(started.elapsed() >= Duration::from_millis(250));
     }
 
     #[test]
