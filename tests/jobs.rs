@@ -733,11 +733,11 @@ fn gravacoes_retomadas_ao_abrir() {
         let job = wait_for(&jobs, rec.id, "retomada", done);
         assert_eq!(job.media, Media::Recording);
         assert_eq!((job.size, job.duration_ms), (rec.size, 1_000));
-        // O `TestPipeline` estima 1 s por segundo; a gravação, o dobro.
+        // O `TestPipeline` estima 1 s por segundo; a gravação, 2,2× (arredondado para cima).
         assert_eq!(
             job.estimate,
             Some(Estimate {
-                secs: 2,
+                secs: 3,
                 gpu: false
             })
         );

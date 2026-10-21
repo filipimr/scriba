@@ -14,7 +14,7 @@ pub use fake::FakePipeline;
 pub use id::{InvalidId, JobId};
 pub use model::{
     Audio, AudioEvent, Estimate, Event, FORMATS, Failure, Invalid, Job, Media, Outputs,
-    PANIC_MESSAGE, Probe, RECORDING_PREFIX, Stage, State,
+    PANIC_MESSAGE, Probe, RECORDING_COST, RECORDING_PREFIX, Stage, State,
 };
 pub use pipeline::{Ctx, Pipeline};
 pub use store::{AudioError, DIALOG_ERROR, Jobs, RemoveError, RetryError, part_path};

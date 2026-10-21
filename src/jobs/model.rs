@@ -300,13 +300,17 @@ pub struct Job {
     pub state: State,
 }
 
+/// Quanto a gravação custa, no máximo, sobre um arquivo da mesma duração: medido na etapa 6.4
+/// (`custo_da_gravacao`), até 2,06× sem fone; 1,1–1,35× com fone.
+pub const RECORDING_COST: f64 = 2.2;
+
 /// O começo do nome de uma gravação na lista.
 pub const RECORDING_PREFIX: &str = "Gravação de";
 
 impl Job {
     /// O job de uma gravação terminada. `file_estimate` é a estimativa de um arquivo da
-    /// mesma duração: as duas trilhas custam até o dobro (sem fone, o eco também é
-    /// transcrito antes de sair).
+    /// mesma duração: as duas trilhas custam até [`RECORDING_COST`] vezes isso (sem fone, o
+    /// eco também é transcrito antes de sair).
     pub fn recording(rec: Recording, file_estimate: Option<Estimate>) -> Self {
         let c = rec.created;
         Self {
@@ -320,7 +324,7 @@ impl Job {
             duration_ms: rec.duration_ms,
             created: rec.created,
             estimate: file_estimate.map(|e| Estimate {
-                secs: e.secs * 2,
+                secs: (e.secs as f64 * RECORDING_COST).ceil() as u64,
                 ..e
             }),
             input: rec.dir,
@@ -475,7 +479,7 @@ mod tests {
         assert_eq!(
             job.estimate,
             Some(Estimate {
-                secs: 80,
+                secs: 88,
                 gpu: true
             })
         );

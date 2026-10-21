@@ -15,7 +15,7 @@ pub trait Pipeline: Send + Sync {
     /// Onde a transcrição roda, para o rodapé ("Transcrição na GPU: …").
     fn backend(&self) -> Option<String>;
 
-    /// Quanto leva transcrever um arquivo de `duration_ms`; a gravação usa o dobro.
+    /// Quanto leva transcrever um arquivo de `duration_ms`; a gravação, `RECORDING_COST` vezes isso.
     fn estimate(&self, _duration_ms: u64) -> Option<Estimate> {
         None
     }
