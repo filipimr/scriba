@@ -2,10 +2,17 @@
 # base levaram 498 s). Testes que transcrevem rodam um por vez.
 [test-groups]
 whisper = { max-threads = 1 }
+# A gravação com a fonte falsa corre com o relógio acelerado: poucos de cada vez, para a
+# thread de escrita não ficar sem CPU.
+captura = { max-threads = 2 }
 
 [[profile.default.overrides]]
 filter = "binary(spike_a_whisper) | binary(self_test) | binary(asr) | binary(bench_asr) | binary(engine)"
 test-group = "whisper"
+
+[[profile.default.overrides]]
+filter = "binary(capture)"
+test-group = "captura"
 
 [profile.ci]
 fail-fast = false

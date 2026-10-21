@@ -2,10 +2,12 @@
 //! UTC (`GetSystemTime`). Serve ao nome da pasta da saída, ao cabeçalho da transcrição e
 //! ao `job.json`.
 
+use serde::{Deserialize, Serialize};
 use windows_sys::Win32::Foundation::SYSTEMTIME;
 use windows_sys::Win32::System::SystemInformation::{GetLocalTime, GetSystemTime};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Também vai para o `gravacao.json`, de onde uma gravação retomada recupera a hora.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalTime {
     pub year: u16,
     pub month: u8,

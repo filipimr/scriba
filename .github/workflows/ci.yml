@@ -43,10 +43,12 @@ jobs:
       - name: CSS em dia com o DESIGN-scriba.md
         run: cargo xtask css --check
 
+      # Fora da cobertura: os spikes, o xtask e o adaptador do cpal (`capture/wasapi.rs`), que
+      # só roda com placa de som; ele é coberto pela suíte local de hardware.
       - name: Testes (unit + integração) com cobertura
         run: >
           cargo llvm-cov nextest --workspace --profile ci --features scriba/test-support
-          --ignore-filename-regex "crates[/\\\\]spikes|xtask"
+          --ignore-filename-regex "crates[/\\\\]spikes|xtask|src[/\\\\]capture[/\\\\]wasapi"
           --fail-under-lines 90
           --lcov --output-path lcov.info
 

@@ -15,7 +15,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | 3.5 | Build nativo mais rápido | Concluída |
 | 4 | Transcrição de arquivos (MVP) | Concluída |
 | 5 | Guardar áudio | Concluída |
-| 6 | Gravação ao vivo | Não iniciada |
+| 6 | Gravação ao vivo | Em andamento |
 | 7 | Robustez, empacotamento e entrega final | Não iniciada |
 
 Valores possíveis: Não iniciada, Em andamento, Concluída.
@@ -97,7 +97,7 @@ O PRD original (codinome "MediaPipe Core") propõe um monólito em Rust: Axum + 
 | Transcrição | `whisper-rs` 0.16 com o modelo **large-v3-turbo q5_0 (~0,6 GB) embutido no .exe**, carregado da memória (`WhisperContext::new_from_buffer_with_params`) | Invisível e offline. O .exe fica com ~0,65 GB |
 | Aceleração | Backend **Vulkan** (o `vulkan-1.dll` vem com o driver da GPU), com fallback para CPU | CUDA descartado: exigiria DLLs de centenas de MB ao lado do exe |
 | Mídia | `ffmpeg-next` 9 + FFmpeg 9 **estático** via vcpkg com baseline fixado no repo: `ffmpeg[core,avcodec,avformat,swresample,swscale,x264,gpl,nvcodec]` | Sem DLLs do FFmpeg. O binário distribuído é GPL (veja a Fase 1) |
-| Captura | `cpal` (WASAPI): mic e loopback em trilhas separadas, WAV mono 16-bit gravado no disco | À prova de crash. Ocupa ~345 MB/h por trilha; apagadas depois da transcrição |
+| Captura | `cpal` (WASAPI): mic e loopback em trilhas separadas, WAV mono 16-bit a 32 kHz gravado no disco (`<data-dir>/gravacoes/<id>/`) | À prova de crash: uma gravação interrompida volta ao abrir o app. Ocupa ~230 MB/h por trilha; as trilhas ficam até a resposta a "Guardar o áudio?" |
 | Web | `axum` 0.8 + `askama` + htmx 2 + Tailwind v4 compilado + fonte Inter (substituta do SF Pro indicada pelo design doc), tudo embutido | Nenhum arquivo solto. Funciona offline |
 | Estado | Fila em memória (`Arc<RwLock<HashMap>>` + `mpsc`), mais um manifesto `job.json` por saída | O histórico sobrevive a reinícios sem precisar de banco |
 | Saídas | `Documentos\Scriba\AAAA-MM-DD HHmm - nome\` (`transcricao.txt`, `transcricao.md`, `audio.m4a`/`video.mp4`). Temporários em `%LOCALAPPDATA%\Scriba` | Todos os caminhos são configuráveis, o que deixa os testes isolados |
@@ -384,23 +384,25 @@ O plano da fase a divide em duas etapas, cada uma com o próprio PR: 5.1 `media:
 
 Base no PRD: Sprint 5. Objetivo: um clique grava o microfone e o som do PC; ao parar, sai a transcrição rotulada "Você" / "Outros", e as trilhas são descartadas, salvo se o usuário guardar o áudio.
 
+O plano da fase a divide em quatro etapas, cada uma com o próprio PR: 6.1 captura e `Recorder` (ainda fora do app); 6.2 job de gravação e transcrição rotulada; 6.3 UI e rotas; 6.4 "Pronto quando" no hardware e fechamento.
+
 **Entregas:**
 
 - [ ] Lista de dispositivos (padrões marcados), com escolha nos ajustes.
-- [ ] Recorder com três streams:
+- [x] Recorder com três streams (etapa 6.1, `src/capture/`):
   - Mic.
   - Loopback: stream de entrada aberto no dispositivo de saída com `default_output_config`.
   - Silêncio tocando na mesma saída.
 
   Os callbacks só copiam para ring buffers SPSC (`rtrb`).
-- [ ] Thread de escrita: downmix para mono, conversão para i16, WAV via `hound` com `flush` a cada 5 s. Alinhamento por timestamp. Medidores RMS.
+- [x] Thread de escrita (etapa 6.1): downmix para mono, reamostragem para 32 kHz, conversão para i16, WAV via `hound` com `flush` a cada 5 s. Alinhamento por timestamp. Medidores RMS.
 - [ ] Rotas `POST /api/record/start`, `POST /api/record/stop` e `GET /api/record/status`.
 - [ ] UI: tile escuro com botão grande e barra fixa "● Gravando 00:12:34 · Parar".
 - [ ] Job de gravação:
   - Mixdown só se o usuário escolher "Guardar áudio", com o `media::encode_audio` da Fase 5.
   - Transcrição de cada trilha, mesclada por tempo com os rótulos Você/Outros.
   - Remoção do eco e geração do `transcricao.txt` e do `transcricao.md`.
-  - WAVs apagados após o sucesso.
+  - As trilhas ficam até a resposta a "Guardar o áudio?", como o envio (Fase 5): Descartar, Guardar áudio, Remover ou fechar o app com a pergunta pendente as apagam; uma gravação ainda não transcrita (Ctrl+C, crash) é retomada ao abrir o app.
 - [ ] Robustez:
   - Dispositivo removido: salva o que foi gravado.
   - Troca da saída padrão: reabre o loopback.
@@ -410,11 +412,11 @@ Base no PRD: Sprint 5. Objetivo: um clique grava o microfone e o som do PC; ao p
 
 - [ ] Unitários: downmix e i16; alinhamento e preenchimento; mescla e dedupe de eco (proptest); teto de duração.
 - [ ] Integração com `AudioSource` falso:
-  - Lacunas e jitter → trilhas alinhadas (±10 ms).
-  - Erro de dispositivo → arquivo finalizado.
-  - Fixtures "Você"/"Outros" + eco → texto rotulado e sem duplicatas.
+  - [x] Lacunas e jitter → trilhas alinhadas (±10 ms) (etapa 6.1, com deriva de +500 ppm e taxas diferentes).
+  - [x] Erro de dispositivo → arquivo finalizado (etapa 6.1; a saída invalidada é reaberta).
+  - [ ] Fixtures "Você"/"Outros" + eco → texto rotulado e sem duplicatas.
 - [ ] E2E com `--fake-audio`: Gravar → timer → Parar → transcrição rotulada.
-- [ ] Local: mic e loopback reais com 15 s de silêncio no meio.
+- [x] Local: mic e loopback reais com 15 s de silêncio no meio (etapa 6.1, `tests/capture.rs`; também gravando com a CPU ocupada por uma transcrição e por 1 h).
 
 **Pronto quando:**
 
@@ -601,6 +603,12 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-20 | Fase 5 | Design: componente `audio-prompt` (parchment dentro do card branco, `{typography.callout}`, `{rounded.md}`, 12 × 16 px), com "Guardar áudio" e "Descartar" em `button-secondary` de mesmo peso e "Mostrar no Explorer" em `button-utility` (ícone Lucide folder-search). Enquanto grava, o botão de ação do card vira "Cancelar o áudio de …"; com a janela aberta, ele fica inativo | Nenhuma resposta é a errada; a troca de superfície separa a pergunta sem borda nem cor |
 | 2026-10-20 | Fase 5 | "Pronto quando" com o exe de release (Vulkan) e o MP4 de 1 h (472 MB): transcrição em 119 s na RTX (estimativa do card: "Cerca de 3 min"); "Guardar áudio" pela janela real em 25 s do clique ao fim; `.m4a` de 30,1 MB, AAC-LC mono a 32 kHz, 3.600,02 s, que o shell do Windows (o Media Foundation, o mesmo do Media Player) lê como "Arquivo M4A" de 01:00:00. A conferência no celular fica com o mantenedor | Critério da fase |
 | 2026-10-20 | Fase 5 | Celular, conferido sem aparelho: o `.m4a` de 1 h é AAC-LC mono a 32 kHz em MPEG-4 com a marca `M4A ` (compatíveis `isom`/`iso2`), `moov` antes do `mdat` e edit list do atraso do AAC, o formato que Android e iOS tocam. O `<audio>` do Edge, que não usa o FFmpeg do Scriba, dá 3.600,02 s, toca o começo e toca o fim até o `ended`; `canPlayType("audio/mp4; codecs=mp4a.40.2")` = "probably". O teste num aparelho fica para a primeira versão de uso | O mantenedor só testa à mão na primeira versão de uso; até lá, os itens que dependeriam dele são conferidos com o melhor substituto possível |
+| 2026-10-20 | Fase 6 | A fase é dividida em quatro etapas, cada uma com o próprio PR: 6.1 captura e `Recorder`, 6.2 job de gravação e transcrição rotulada, 6.3 UI e rotas, 6.4 "Pronto quando" e fechamento | Fase maior que a 5; o motor de captura é medido no hardware antes de entrar no app |
+| 2026-10-20 | Fase 6 | Decisões do mantenedor: (1) Ctrl+C ou crash durante a gravação não a perdem: as trilhas ficam em `<data-dir>/gravacoes/<id>/` com um `gravacao.json`, e ao abrir o app cada gravação ainda não transcrita volta à fila; (2) cancelar a transcrição de uma gravação descarta as trilhas, com `confirm-dialog`; (3) WAVs a 32 kHz fixos, mono 16-bit (~230 MB/h por trilha), reamostrados na thread de escrita; (4) a voz "Você" é conferida no hardware de forma híbrida (a Maria misturada depois na trilha real do microfone), sem instalar um cabo de áudio virtual | As trilhas são a única cópia da gravação; 32 kHz é o teto do `.m4a` (Fase 5) e deixa as duas trilhas na mesma taxa com qualquer dispositivo; esta máquina tem uma saída só, e tudo que toca nela cai no loopback |
+| 2026-10-21 | Fase 6 | Medições da etapa 6.1 com o microfone e o loopback reais (`tests/capture.rs`, build de release; microfone: matriz Intel Smart Sound; saída: alto-falantes Realtek a 22%): (1) 15 s de fala da Câmara, 15 s sem nada tocando e 15 s de novo: loopback sem nenhuma lacuna no silêncio; marcadores tocados a 7 s ficaram a 6,9995 s no WAV; erro máximo contra o relógio 0,9 ms (microfone, −528 ppm) e 2,5 ms (sistema). (2) 3 min gravando com o `small` transcrevendo 1 h na CPU: nenhum pacote perdido, marcadores a −2,0 ms em 177 s. (3) 60 min: nenhum pacote perdido, marcadores a −1,7 ms em 3.595 s, erro máximo 2,2 ms e 4,0 ms, deriva −15 e −2 ppm; pico de 452 MB no processo do teste, que inclui o áudio decodificado para tocar (o Recorder sozinho é medido na 6.4). A abertura dos streams leva ~0,6–0,8 s, e o microfone tem 20–50 ms de lacuna logo no começo | Critérios da etapa. O microfone desta máquina cancela no DSP o som dos alto-falantes, por isso o alinhamento é medido por marcadores na trilha do sistema e pelo erro de cada trilha contra o relógio, e não pelo eco |
+| 2026-10-21 | Fase 6 | Suspensão do computador durante a gravação: enquanto grava, a thread de escrita pede ao Windows para não suspender por inatividade (`SetThreadExecutionState` com `ES_SYSTEM_REQUIRED`); se ele suspender mesmo assim (tampa fechada no intervalo, Modern Standby com a tela apagada), a gravação segue ao acordar, na mesma gravação: uma lacuna de mais de 30 s numa trilha tira o tempo suspenso do relógio das duas juntas (as marcações de tempo seguem corridas, e o status avisa a pausa), e um timestamp mais de 1 s no futuro (um dispositivo que voltou com o relógio errado) reancora só a trilha dele. Um intervalo da reunião com o computador ligado não dispara nada: os pacotes continuam chegando, silenciosos | Decisão do mantenedor (continuar em vez de encerrar, para uma reunião com intervalo). Na 1ª tentativa da gravação de 1 h, o notebook entrou em Modern Standby várias vezes durante a noite: o teste durou 10 h, o alinhamento preencheu 9,3 h de silêncio e o microfone voltou de uma suspensão com um timestamp 8,9 h à frente |
+| 2026-10-20 | Fase 6 | O `src/capture/wasapi.rs` (o `CpalSource`) sai do cálculo de cobertura do CI, como os spikes | Só roda com placa de som, que o runner não tem; a suíte local de hardware (`tests/capture.rs`) o exercita. Com ele, a cobertura cairia de ~91,9% para 89,4%, abaixo do piso de 90% |
+| 2026-10-20 | Fase 6 | Alinhamento pelo timestamp de captura de cada pacote (o QPC do 1º frame, o mesmo relógio nas duas trilhas): lacuna acima de 20 ms vira silêncio, deriva entre 2 e 20 ms é corrigida aos poucos pelo `swr_set_compensation`, pacote adiantado acima de 20 ms perde o começo; meta de ±10 ms entre as trilhas. Medidores por SSE (`GET /api/record/levels`); sem abas no header; eco removido por sobreposição (±1 s) e ≥ 60% das palavras em ordem (LCS); `.txt` de gravação com `Gravação:` no cabeçalho e `Você:`/`Outros:` depois do tempo, lidos só nesse caso | Plano da fase |
 
 ## Referências verificadas
 

@@ -2,8 +2,9 @@
 //! original, e `extract_audio` entrega a melhor faixa de áudio em 16 kHz mono f32, sem
 //! decodificar o vídeo. `extract_audio_into` entrega o áudio aos poucos (para o [`Spool`],
 //! em disco), sem segurar a duração inteira na memória. `encode_audio` guarda o áudio do
-//! original num `.m4a` AAC mono.
+//! original num `.m4a` AAC mono. O [`Resampler`] leva as trilhas da gravação à taxa do WAV.
 
+mod resample;
 mod spool;
 
 use std::fmt;
@@ -21,6 +22,7 @@ use ffmpeg_next as ffmpeg;
 
 use crate::jobs::Failure;
 
+pub use resample::Resampler;
 pub use spool::Spool;
 
 /// Taxa de amostragem que o whisper espera.

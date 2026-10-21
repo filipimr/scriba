@@ -21,11 +21,14 @@ anyhow.workspace = true
 askama.workspace = true
 axum.workspace = true
 clap.workspace = true
+cpal.workspace = true
 dirs.workspace = true
 ffmpeg-next.workspace = true
 getrandom.workspace = true
 hex.workspace = true
+hound.workspace = true
 open.workspace = true
+rtrb.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 subtle.workspace = true
@@ -43,6 +46,11 @@ tower.workspace = true
 # Sobe o exe com `--fake-pipeline`: o probe real recusaria os bytes do envio.
 [[test]]
 name = "upload"
+required-features = ["test-support"]
+
+# A gravação com o `FakeSource` (os testes de hardware usam o cpal).
+[[test]]
+name = "capture"
 required-features = ["test-support"]
 
 [workspace]
@@ -67,7 +75,9 @@ hound = "3.5.1"
 insta = "1.49.0"
 open = "5.4.4"
 proptest = "1.12.0"
-serde = { version = "1.0.229", features = ["derive"] }
+# Os ring buffers SPSC entre os callbacks de áudio e a thread de escrita da gravação.
+rtrb = "0.4.0"
+serde ={ version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_yaml_ng = "0.10.0"
 sha2 = "0.11.1"
@@ -78,11 +88,12 @@ tower = { version = "0.5.3", features = ["util"] }
 ureq = "3.4.2"
 # `raw-api`: o registro de dispositivos do ggml, o VAD carregado da memória e o log.
 whisper-rs = { version = "0.16.0", features = ["raw-api"] }
-# O "Salvar como" do Windows (`IFileSaveDialog`, COM tipado). O cpal (Fase 6) já usa a 0.62.
-windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
-# Hora local e fuso (GetLocalTime/GetSystemTime), a Lixeira (SHFileOperationW); nos testes, o
-# pico de memória do processo.
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell"] }
+# O "Salvar como" do Windows (`IFileSaveDialog`, COM tipado). Na gravação, o relógio dos pacotes
+# (QPC) e o enumerador do dispositivo (Bluetooth), com features que o cpal já compila.
+windows = { version = "0.62.2", features = ["Win32_Devices_Properties", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Media_Audio", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Performance", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
+# Hora local e fuso (GetLocalTime/GetSystemTime), a Lixeira (SHFileOperationW), o espaço livre em
+# disco da gravação; nos testes, o pico de memória do processo.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell"] }
 
 [profile.release]
 lto = "thin"
