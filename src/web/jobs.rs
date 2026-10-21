@@ -45,6 +45,9 @@ pub struct Card {
     pub id: String,
     pub name: String,
     pub video: bool,
+    /// Uma gravação ao vivo: ícone de microfone, e Cancelar (ou Remover, se falhou) pede
+    /// confirmação porque apaga as trilhas.
+    pub recording: bool,
     /// "2 min"; `None` quando o arquivo não informa.
     pub duration: Option<String>,
     pub size: String,
@@ -183,6 +186,7 @@ impl Card {
             id: job.id.to_string(),
             name: job.name.clone(),
             video: job.media == Media::Video,
+            recording: job.media == Media::Recording,
             duration: format_duration(job.duration_ms),
             size: format_size(job.size),
             date: job.created.display(),
@@ -800,6 +804,31 @@ mod tests {
         for (name, state) in states {
             let html = CardTemplate {
                 job: &Card::new(&job(state)),
+            }
+            .render()
+            .unwrap();
+            insta::assert_snapshot!(name, html);
+        }
+    }
+
+    #[test]
+    fn card_de_gravacao() {
+        let recording = |state| Job {
+            name: "Gravação de 20/10, 14:30".into(),
+            media: Media::Recording,
+            ..job(state)
+        };
+        for (name, state) in [
+            ("gravacao_na_fila", JobState::Queued),
+            (
+                "gravacao_falhou",
+                JobState::Failed {
+                    message: "Não foi possível processar esta gravação.".into(),
+                },
+            ),
+        ] {
+            let html = CardTemplate {
+                job: &Card::new(&recording(state)),
             }
             .render()
             .unwrap();

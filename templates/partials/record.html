@@ -1,0 +1,18 @@
+{%- include "partials/recording_bar.html" %}
+{%- if let Some(panel) = panel %}
+{% include "partials/record_panel.html" %}
+{%- endif %}
+{%- if let Some(panel) = parts %}
+<span id="gravar-tempo" class="record-timer" data-tempo hx-swap-oob="true">{{ panel.elapsed }}</span>
+<div id="gravar-avisos" class="record-alerts" hx-swap-oob="true">
+  {%- include "partials/record_alerts.html" %}
+</div>
+{%- endif %}
+{%- if let Some(job) = card %}
+<div hx-swap-oob="afterbegin:#jobs">
+{% include "partials/job_card.html" %}
+</div>
+{%- endif %}
+{%- if let Some(notice) = notice %}
+<div id="avisos" hx-swap-oob="innerHTML">{{ notice }}</div>
+{%- endif %}

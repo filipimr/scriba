@@ -1,6 +1,6 @@
 <article id="job-{{ job.id }}" class="job-card max-md:p-md"
   {%- if job.polling %} hx-get="/api/jobs/{{ job.id }}{% if job.done.is_some() %}?audio=1{% endif %}" hx-trigger="every 1s" hx-swap="outerHTML"{% endif %}>
-  {%- if job.video %}{% include "icons/file-video-camera.svg" %}{% else %}{% include "icons/file-headphone.svg" %}{% endif %}
+  {%- if job.recording %}{% include "icons/mic.svg" %}{% else if job.video %}{% include "icons/file-video-camera.svg" %}{% else %}{% include "icons/file-headphone.svg" %}{% endif %}
   <div class="job-card-main">
     <div class="job-card-head">
       <h3 class="job-card-name" title="{{ job.name }}">{{ job.name }}</h3>
@@ -66,7 +66,8 @@
   {%- when crate::web::jobs::Action::CancelJob %}
   <button id="acao-{{ job.id }}" class="btn-icon" type="button" aria-label="Cancelar {{ job.name }}" title="Cancelar"
     {%- if job.canceling %} aria-disabled="true"
-    {%- else %} hx-post="/api/jobs/{{ job.id }}/cancel" hx-target="#job-{{ job.id }}" hx-swap="outerHTML" hx-sync="#job-{{ job.id }}:replace"{% endif %}>
+    {%- else %} hx-post="/api/jobs/{{ job.id }}/cancel" hx-target="#job-{{ job.id }}" hx-swap="outerHTML" hx-sync="#job-{{ job.id }}:replace"
+    {%- if job.recording %} hx-confirm="As trilhas gravadas serão apagadas." data-confirmar-titulo="Descartar a gravação?" data-confirmar-acao="Descartar"{% endif %}{% endif %}>
     {%- include "icons/x.svg" -%}
   </button>
   {%- when crate::web::jobs::Action::CancelAudio %}
@@ -82,6 +83,7 @@
   {%- when crate::web::jobs::Action::Remove %}
   <button id="acao-{{ job.id }}" class="btn-icon" type="button" aria-label="Remover {{ job.name }}" title="Remover"
     {%- if let Some(done) = job.done %} hx-delete="/api/jobs/{{ job.id }}?confirm=1" hx-confirm="A pasta “{{ done.folder }}” vai para a Lixeira."
+    {%- else if job.recording && job.retry %} hx-delete="/api/jobs/{{ job.id }}" hx-confirm="As trilhas gravadas serão apagadas." data-confirmar-titulo="Descartar a gravação?" data-confirmar-acao="Descartar"
     {%- else %} hx-delete="/api/jobs/{{ job.id }}"{% endif %} hx-target="#job-{{ job.id }}" hx-swap="outerHTML" hx-sync="#job-{{ job.id }}:replace">
     {%- include "icons/trash-2.svg" -%}
   </button>

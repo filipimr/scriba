@@ -5,10 +5,12 @@ mod audio;
 mod jobs;
 mod pages;
 mod reader;
+mod record;
 pub mod security;
 
 use std::future::{Future, IntoFuture};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -17,6 +19,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::middleware::from_fn_with_state;
 use axum::routing::{get, post};
 
+use crate::capture::Recorder;
 use crate::config::{Config, Paths};
 use crate::dialog::SaveDialog;
 use crate::jobs::Jobs;
@@ -38,7 +41,11 @@ pub struct Inner {
     pub opener: Arc<dyn Opener>,
     /// O "Salvar como" do "Guardar áudio".
     pub dialog: Arc<dyn SaveDialog>,
+    /// A gravação ao vivo.
+    pub recorder: Recorder,
     config: Mutex<Config>,
+    /// O app está fechando: o SSE dos medidores termina.
+    closing: AtomicBool,
 }
 
 impl std::ops::Deref for AppState {
@@ -48,6 +55,13 @@ impl std::ops::Deref for AppState {
     }
 }
 
+/// O que fala com a área de trabalho: o Explorer, o "Salvar como" e os dispositivos de som.
+pub struct Desktop {
+    pub opener: Arc<dyn Opener>,
+    pub dialog: Arc<dyn SaveDialog>,
+    pub recorder: Recorder,
+}
+
 impl AppState {
     pub fn new(
         token: String,
@@ -55,10 +69,14 @@ impl AppState {
         port: u16,
         paths: Paths,
         jobs: Jobs,
-        opener: Arc<dyn Opener>,
-        dialog: Arc<dyn SaveDialog>,
+        desktop: Desktop,
     ) -> Self {
         let config = Config::load(&paths.config_file());
+        let Desktop {
+            opener,
+            dialog,
+            recorder,
+        } = desktop;
         Self(Arc::new(Inner {
             token,
             instance_id,
@@ -67,8 +85,20 @@ impl AppState {
             jobs,
             opener,
             dialog,
+            recorder,
             config: Mutex::new(config),
+            closing: AtomicBool::new(false),
         }))
+    }
+
+    /// Avisa os streams longos (o SSE dos medidores) de que o app está fechando, para não
+    /// segurarem o [`SHUTDOWN_GRACE`].
+    pub fn close(&self) {
+        self.closing.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_closing(&self) -> bool {
+        self.closing.load(Ordering::Relaxed)
     }
 
     pub fn config(&self) -> Config {
@@ -110,6 +140,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs/{id}/audio/show", post(audio::show))
         .route("/api/jobs/{id}/transcricao.txt", get(reader::download_txt))
         .route("/api/jobs/{id}/transcricao.md", get(reader::download_md))
+        .route("/api/record/start", post(record::start))
+        .route("/api/record/stop", post(record::stop))
+        .route("/api/record/status", get(record::status))
+        .route("/api/record/levels", get(record::levels))
+        .route(
+            "/api/record/devices",
+            get(record::devices).post(record::choose),
+        )
         .route("/jobs/{id}", get(reader::page))
         .route("/health", get(pages::health))
         .route("/assets/{*path}", get(assets::serve))

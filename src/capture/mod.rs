@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use fake::FakeSource;
+pub use fake::{FakeSource, ScriptedSource};
 pub use source::{
     AudioSource, Choice, Consumer, Device, Devices, Error, Event, EventKind, Events, Format,
     Opened, Packet, Producer, RING_SECS, Track, ring,

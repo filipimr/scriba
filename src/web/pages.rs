@@ -6,6 +6,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 
 use super::jobs::{self, Card};
+use super::record::{self, PanelView};
 use super::{AppState, assets};
 use crate::config::Theme;
 
@@ -19,10 +20,13 @@ pub struct Layout {
     pub version: &'static str,
     /// Onde a transcrição roda, no rodapé.
     pub backend: Option<String>,
+    /// A `recording-bar` já renderizada (o lugar vazio quando não grava).
+    pub bar: String,
 }
 
 impl Layout {
-    pub(super) fn new(backend: Option<String>) -> Self {
+    /// `painel`: a página tem o `record-panel` (a inicial).
+    pub(super) fn new(state: &AppState, painel: bool) -> Self {
         Self {
             css: assets::url("app.css"),
             htmx: assets::url("vendor/htmx.min.js"),
@@ -30,7 +34,8 @@ impl Layout {
             favicon: assets::url("brand/logo-16.svg"),
             logo: assets::url("brand/logo-white.svg"),
             version: env!("CARGO_PKG_VERSION"),
-            backend,
+            backend: state.jobs.backend(),
+            bar: record::bar_html(state, painel),
         }
     }
 }
@@ -41,6 +46,7 @@ struct IndexPage {
     layout: Layout,
     theme: Theme,
     jobs: Vec<Card>,
+    panel: PanelView,
     accept: String,
     format_error: String,
 }
@@ -51,18 +57,20 @@ struct ThemeToggle {
     theme: Theme,
 }
 
+/// As páginas não vão para o cache: o "Voltar" do navegador pede a lista de agora.
 pub(super) fn render(t: &impl Template) -> Response {
     match t.render() {
-        Ok(html) => Html(html).into_response(),
+        Ok(html) => ([(header::CACHE_CONTROL, "no-store")], Html(html)).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
 pub async fn index(State(state): State<AppState>) -> Response {
     render(&IndexPage {
-        layout: Layout::new(state.jobs.backend()),
+        layout: Layout::new(&state, true),
         theme: state.config().theme,
         jobs: state.jobs.list().iter().map(Card::new).collect(),
+        panel: PanelView::new(&state.recorder.status(), false, None),
         accept: jobs::accept(),
         format_error: jobs::format_error(),
     })

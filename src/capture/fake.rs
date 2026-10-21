@@ -4,8 +4,13 @@
 //! tamanho do pacote, jitter na entrega e no timestamp, lacunas (pacotes que não chegam),
 //! deriva do relógio do dispositivo e um erro num instante dado. O relógio pode correr mais
 //! rápido que o real, para os testes longos.
+//!
+//! O [`ScriptedSource`] é a fonte do `--fake-audio`: tons em tempo real nas duas trilhas, os
+//! dispositivos simulados e um roteiro opcional em `<data-dir>/audio-falso.txt`, lido a cada
+//! abertura (o E2E escreve nele).
 
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -22,6 +27,12 @@ pub enum Signal {
     Tone {
         freq: f32,
         amp: f32,
+    },
+    /// Um tom cujo volume sobe e desce a cada `period_ms`: os medidores mexem.
+    Pulsing {
+        freq: f32,
+        amp: f32,
+        period_ms: u32,
     },
     /// Um pico de `amp` em cada múltiplo de `every_ms` do relógio: as duas trilhas têm os
     /// picos nos mesmos instantes, o que mede o alinhamento.
@@ -108,6 +119,22 @@ impl Script {
             ),
             devices: devices(),
         }
+    }
+
+    /// A do `--fake-audio`: os dois tons pulsando, em ritmos diferentes.
+    pub fn app() -> Self {
+        let mut script = Self::tones();
+        script.mic.signal = Signal::Pulsing {
+            freq: 440.0,
+            amp: 0.3,
+            period_ms: 1_500,
+        };
+        script.system.signal = Signal::Pulsing {
+            freq: 660.0,
+            amp: 0.2,
+            period_ms: 2_300,
+        };
+        script
     }
 
     fn track(&mut self, track: Track) -> &mut TrackScript {
@@ -258,6 +285,74 @@ impl AudioSource for FakeSource {
     }
 }
 
+/// Depois de quanto tempo da abertura o `perder-mic` e o `perder-saida` derrubam a trilha.
+pub const LOSE_AFTER_MS: u64 = 2_000;
+
+/// A fonte do `--fake-audio`. Cada abertura relê `<data-dir>/audio-falso.txt`, uma palavra
+/// por linha: `perder-mic` e `perder-saida` (o dispositivo some [`LOSE_AFTER_MS`] depois),
+/// `sem-microfone`, `microfone-bloqueado` e `mic-mudo`. Sem o arquivo, grava os tons.
+pub struct ScriptedSource {
+    inner: FakeSource,
+    file: PathBuf,
+}
+
+impl ScriptedSource {
+    pub const FILE: &str = "audio-falso.txt";
+
+    pub fn new(data_dir: &Path) -> Self {
+        Self {
+            inner: FakeSource::new(Script::app()),
+            file: data_dir.join(Self::FILE),
+        }
+    }
+
+    fn apply(&self, track: Track, device: Option<&str>) {
+        let text = std::fs::read_to_string(&self.file).unwrap_or_default();
+        let now_ms = self.inner.now_ns() / 1_000_000;
+        self.inner.edit(|s| {
+            let mut fresh = Script::app();
+            *s.track(track) = fresh.track(track).clone();
+            if let Some(d) = device.and_then(|id| {
+                let list = match track {
+                    Track::Mic => &s.devices.inputs,
+                    Track::System => &s.devices.outputs,
+                };
+                list.iter().find(|d| d.id == id).cloned()
+            }) {
+                s.track(track).name = d.name;
+            }
+            for word in text.split_whitespace() {
+                match (word, track) {
+                    ("perder-mic", Track::Mic) | ("perder-saida", Track::System) => {
+                        s.track(track).fail = Some((now_ms + LOSE_AFTER_MS, EventKind::Lost));
+                    }
+                    ("sem-microfone", Track::Mic) => s.mic.open_error = Some(Error::NoMic),
+                    ("microfone-bloqueado", Track::Mic) => {
+                        s.mic.open_error = Some(Error::MicDenied);
+                    }
+                    ("mic-mudo", Track::Mic) => s.mic.signal = Signal::Silence,
+                    _ => {}
+                }
+            }
+        });
+    }
+}
+
+impl AudioSource for ScriptedSource {
+    fn devices(&self) -> Result<Devices, Error> {
+        self.inner.devices()
+    }
+
+    fn now_ns(&self) -> u64 {
+        self.inner.now_ns()
+    }
+
+    fn open(&self, track: Track, device: Option<&str>, events: Events) -> Result<Opened, Error> {
+        self.apply(track, device);
+        self.inner.open(track, device, events)
+    }
+}
+
 /// Fecha como um stream do cpal: o callback para quando o valor sai de cena.
 struct Stream {
     stop: Arc<AtomicBool>,
@@ -362,6 +457,16 @@ fn sample(signal: &Signal, k: u64, t_ns: u64, next_ns: u64, rate: u32) -> f32 {
         Signal::Tone { freq, amp } => {
             let secs = k as f64 / f64::from(rate);
             (secs * f64::from(*freq) * std::f64::consts::TAU).sin() as f32 * amp
+        }
+        Signal::Pulsing {
+            freq,
+            amp,
+            period_ms,
+        } => {
+            let secs = k as f64 / f64::from(rate);
+            let phase = secs * 1_000.0 / f64::from((*period_ms).max(1));
+            let envelope = 0.15 + 0.85 * (phase * std::f64::consts::PI).sin().abs();
+            ((secs * f64::from(*freq) * std::f64::consts::TAU).sin() * envelope) as f32 * amp
         }
         Signal::Impulses { every_ms, amp } => {
             let every = every_ms * 1_000_000;

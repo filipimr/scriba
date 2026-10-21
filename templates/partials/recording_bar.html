@@ -1,0 +1,18 @@
+{%- match bar %}
+{%- when crate::web::record::Bar::Show(b) %}
+{#- Enquanto grava, a barra acompanha o estado pelo polling (o painel, se a página tem, vem fora de banda) e o tempo pelo SSE. #}
+<div id="barra-gravacao" class="recording-bar" data-gravando
+  hx-get="/api/record/status?id={{ b.id }}{% if b.painel %}&amp;painel=1{% endif %}" hx-trigger="every 1s" hx-swap="outerHTML"
+  {%- if b.oob %} hx-swap-oob="true"{% endif %}>
+  <div class="recording-bar-state">
+    <span class="recording-dot" aria-hidden="true"></span>
+    <span>Gravando</span>
+    <span class="recording-bar-timer" data-tempo>{{ b.elapsed }}</span>
+  </div>
+  <button id="barra-parar" class="btn btn-primary" type="button" title="Parar (Ctrl+Shift+R)"
+    hx-post="/api/record/stop{% if b.painel %}?painel=1{% endif %}" hx-swap="none" hx-disabled-elt="this" data-parar>Parar</button>
+</div>
+{%- when crate::web::record::Bar::Empty(oob) %}
+<div id="barra-gravacao"{% if oob %} hx-swap-oob="true"{% endif %}></div>
+{%- when crate::web::record::Bar::Skip %}
+{%- endmatch %}

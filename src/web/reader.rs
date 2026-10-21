@@ -39,6 +39,8 @@ pub struct Loaded {
 pub struct ParagraphView {
     /// `00:00:08`; `None` para texto fora do formato.
     pub time: Option<String>,
+    /// Numa gravação: "Você" ou "Outros".
+    pub speaker: Option<&'static str>,
     pub text: String,
 }
 
@@ -159,6 +161,7 @@ pub fn view(job: &Job, outputs: &Outputs, read: io::Result<Vec<u8>>) -> ReaderVi
                 .into_iter()
                 .map(|b| ParagraphView {
                     time: b.start_ms.map(transcript::timestamp),
+                    speaker: b.speaker.map(transcript::Speaker::label),
                     text: b.text,
                 })
                 .collect();
@@ -217,7 +220,7 @@ pub async fn page(State(state): State<AppState>, Path(id): Path<String>) -> Resp
         None => (StatusCode::NOT_FOUND, unknown_view()),
     };
     let mut response = render(&ReaderPage {
-        layout: Layout::new(state.jobs.backend()),
+        layout: Layout::new(&state, false),
         theme: state.config().theme,
         view,
     });
@@ -431,6 +434,21 @@ mod tests {
                 view(&job(o.clone()), &o, Err(io::ErrorKind::NotFound.into())),
             ),
             ("leitor_desconhecido", unknown_view()),
+            (
+                "leitor_gravacao",
+                view(
+                    &Job {
+                        name: "Gravação de 20/10, 14:30".into(),
+                        media: Media::Recording,
+                        ..job(o.clone())
+                    },
+                    &o,
+                    Ok("Gravação: Você (microfone) e Outros (som do PC)\r\nData: 20/10/2026 14:30\r\n\
+                        Duração: 00:47:12\r\n\r\n[00:00:00] Outros: Bom dia, pessoal.\r\n\
+                        \r\n[00:00:04] Você: Bom dia & <b>até</b> já.\r\n"
+                        .into()),
+                ),
+            ),
         ];
         for (name, view) in cases {
             insta::assert_snapshot!(name, html(&view));

@@ -71,25 +71,91 @@ document.body.addEventListener("htmx:responseError", (e) => {
 // Erro que chega pelo polling (HX-Trigger "scriba-erro"), como o "Guardar áudio" que falhou.
 document.body.addEventListener("scriba-erro", (e) => toastError(e.detail.value));
 
-// Remover um job concluído (hx-confirm) pede confirmação no <dialog> do design, não no
-// window.confirm. O showModal prende o foco, o Esc cancela e o foco volta ao botão.
+// Remover um job concluído e cancelar uma gravação (hx-confirm) pedem confirmação no <dialog>
+// do design, não no window.confirm. O título e o botão vêm dos data-confirmar-* de quem pediu.
+// O showModal prende o foco, o Esc cancela e o foco volta ao botão.
 const dialog = document.getElementById("confirmar");
 if (dialog) {
+  const title = dialog.querySelector("#confirmar-titulo");
+  const action = dialog.querySelector(".btn-danger");
+  const defaults = { title: title.textContent, action: action.textContent };
   document.body.addEventListener("htmx:confirm", (e) => {
     if (!e.detail.question) return;
     e.preventDefault();
+    const source = e.detail.elt;
+    title.textContent = source.dataset.confirmarTitulo ?? defaults.title;
+    action.textContent = source.dataset.confirmarAcao ?? defaults.action;
     dialog.querySelector("#confirmar-texto").textContent = e.detail.question;
     dialog.returnValue = "";
     dialog.addEventListener(
       "close",
       () => {
-        if (dialog.returnValue === "excluir") e.detail.issueRequest(true);
+        if (dialog.returnValue !== "excluir") return;
+        // O polling pode ter trocado o card enquanto o diálogo estava aberto: o pedido sai do
+        // botão de agora, com o mesmo id.
+        const current = source.id && document.getElementById(source.id);
+        if (current && current !== source) {
+          const card = current.closest("article");
+          htmx.ajax(e.detail.verb.toUpperCase(), e.detail.path, { source: current, target: card, swap: "outerHTML" });
+        } else {
+          e.detail.issueRequest(true);
+        }
       },
       { once: true },
     );
     dialog.showModal();
   });
 }
+
+// O card de uma gravação chega fora de banda (Parar, ou o polling da barra quando ela para
+// sozinha); se as duas respostas chegarem, fica só o card de cima.
+document.body.addEventListener("htmx:oobAfterSwap", () => {
+  const seen = new Set();
+  for (const card of document.querySelectorAll("#jobs > article.job-card")) {
+    if (seen.has(card.id)) card.remove();
+    else seen.add(card.id);
+  }
+});
+
+// Gravação: o tempo e os medidores vêm do SSE (~10 por segundo) enquanto a barra existe; o
+// estado (início, fim, avisos) vem do polling da barra. O stream termina com o evento "fim".
+let levels;
+const syncLevels = () => {
+  const recording = document.querySelector("#barra-gravacao[data-gravando]");
+  if (recording && !levels) {
+    levels = new EventSource("/api/record/levels");
+    levels.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      for (const el of document.querySelectorAll("[data-tempo]")) el.textContent = data.tempo;
+      for (const meter of document.querySelectorAll("meter[data-nivel]")) meter.value = data.niveis[meter.dataset.nivel];
+    };
+    const stop = () => {
+      levels?.close();
+      levels = undefined;
+    };
+    levels.addEventListener("fim", stop);
+    levels.onerror = stop;
+  } else if (!recording && levels) {
+    levels.close();
+    levels = undefined;
+  }
+};
+syncLevels();
+document.body.addEventListener("htmx:afterSettle", syncLevels);
+document.body.addEventListener("htmx:oobAfterSwap", syncLevels);
+
+// Ctrl+Shift+R: Gravar / Parar em qualquer página (no lugar do recarregar do navegador).
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.code === "KeyR")) return;
+  e.preventDefault();
+  if (e.repeat) return;
+  const button = document.querySelector("[data-gravar]") ?? document.querySelector("[data-parar]");
+  if (button) {
+    if (!button.disabled) button.click();
+  } else {
+    htmx.ajax("POST", "/api/record/start", { source: document.body, swap: "none" });
+  }
+});
 
 // Envio de arquivos: soltar na dropzone ou escolher no botão. O htmx faz o POST multipart; aqui
 // só validamos antes de enviar (formatos do `accept`, mensagens vindas do servidor) e

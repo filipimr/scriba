@@ -28,7 +28,7 @@
   {%- else %}
   <div class="transcript-text">
     {%- for p in t.paragraphs %}
-    <p class="transcript-paragraph">{% if let Some(time) = p.time %}<span class="transcript-timestamp">{{ time }}</span> {% endif %}{{ p.text }}</p>
+    <p class="transcript-paragraph">{% if let Some(time) = p.time %}<span class="transcript-timestamp">{{ time }}</span> {% endif %}{% if let Some(speaker) = p.speaker %}<span class="transcript-speaker">{{ speaker }}:</span> {% endif %}{{ p.text }}</p>
     {%- endfor %}
   </div>
   {%- endif %}

@@ -6,13 +6,14 @@ use std::sync::Arc;
 
 use anyhow::Context;
 
+use crate::capture::{AudioSource, CpalSource, Limits, Recorder};
 use crate::config::Paths;
 use crate::dialog::{SaveDialog, SystemDialog};
 use crate::engine::Engine;
 use crate::instance::Instance;
 use crate::jobs::{Jobs, Pipeline};
 use crate::opener::{Opener, SystemOpener};
-use crate::web::{self, AppState, SHUTDOWN_GRACE};
+use crate::web::{self, AppState, Desktop, SHUTDOWN_GRACE};
 
 pub struct Options {
     pub port: u16,
@@ -21,6 +22,9 @@ pub struct Options {
     /// O pipeline falso no lugar do real (E2E).
     #[cfg(feature = "test-support")]
     pub fake_pipeline: bool,
+    /// O áudio falso (`ScriptedSource`) no lugar do microfone e do som do PC (E2E).
+    #[cfg(feature = "test-support")]
+    pub fake_audio: bool,
 }
 
 /// Sobe o servidor e bloqueia até Ctrl+C. Se outra instância já responde, só reabre o
@@ -44,6 +48,19 @@ pub fn run(opts: Options) -> anyhow::Result<()> {
     let (jobs, worker) = Jobs::start(opts.paths.uploads_dir(), pipeline(&opts))
         .context("preparando a pasta de uploads")?;
     resume_recordings(&jobs, &opts.paths.recordings_dir());
+    let recorder = Recorder::new(
+        audio_source(&opts),
+        opts.paths.recordings_dir(),
+        Limits::default(),
+    );
+    {
+        // Cada gravação terminada (menos a do Ctrl+C, que volta na próxima abertura) vai
+        // para a fila.
+        let jobs = jobs.clone();
+        recorder.on_finish(move |rec| {
+            jobs.submit_recording(rec);
+        });
+    }
     let instance = Instance::new(listener.local_addr()?.port());
     instance.write(&file)?;
     let opener = opener(&opts);
@@ -54,13 +71,21 @@ pub fn run(opts: Options) -> anyhow::Result<()> {
         instance.port,
         opts.paths,
         jobs,
-        opener,
-        dialog,
+        Desktop {
+            opener,
+            dialog,
+            recorder: recorder.clone(),
+        },
     );
     announce("Scriba em", &instance.url(), opts.open_browser);
 
-    let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
+    let ctrl_c = {
+        let state = state.clone();
+        async move {
+            let _ = tokio::signal::ctrl_c().await;
+            // O SSE dos medidores termina já, sem esperar o prazo do encerramento.
+            state.close();
+        }
     };
     let result = tokio::runtime::Runtime::new()?.block_on(web::serve(
         listener,
@@ -68,6 +93,13 @@ pub fn run(opts: Options) -> anyhow::Result<()> {
         ctrl_c,
         SHUTDOWN_GRACE,
     ));
+    // Fecha os WAVs antes do worker: a gravação volta na fila na próxima abertura.
+    if let Some(rec) = recorder.finish_on_exit() {
+        eprintln!(
+            "gravação guardada para a próxima abertura: {}",
+            rec.dir.display()
+        );
+    }
     // Também descarta os envios que esperavam a resposta a "Guardar o áudio?".
     if !worker.shutdown(SHUTDOWN_GRACE) {
         eprintln!("o job em andamento não parou a tempo; encerrando mesmo assim");
@@ -97,6 +129,16 @@ fn pipeline(opts: &Options) -> Arc<dyn Pipeline> {
         return Arc::new(crate::jobs::FakePipeline::new(output_dir));
     }
     Arc::new(Engine::new(output_dir))
+}
+
+/// O microfone e o som do PC pelo cpal; com `--fake-audio`, os tons do `ScriptedSource`.
+fn audio_source(opts: &Options) -> Arc<dyn AudioSource> {
+    #[cfg(feature = "test-support")]
+    if opts.fake_audio {
+        return Arc::new(crate::capture::ScriptedSource::new(&opts.paths.data_dir));
+    }
+    let _ = opts;
+    Arc::new(CpalSource::new())
 }
 
 /// Com o pipeline falso, "Abrir pasta" só imprime a pasta (o E2E lê o stdout).

@@ -2,13 +2,7 @@
 
 {% block content %}
 <div class="grid gap-sm lg:grid-cols-2">
-  <section class="record-panel max-md:p-md" aria-labelledby="record-title">
-    <h2 id="record-title" class="sr-only">Gravar</h2>
-    <button class="record-button" type="button" disabled aria-label="Gravar" aria-describedby="record-soon"></button>
-    <span>Gravar</span>
-    <span class="record-timer">00:00:00</span>
-    <p id="record-soon" class="record-hint">A gravação chega em breve. Use fone de ouvido para não duplicar falas.</p>
-  </section>
+  {% include "partials/record_panel.html" %}
 
   <form id="envio" class="dropzone max-md:p-md" aria-labelledby="drop-title"
         hx-post="/api/jobs" hx-encoding="multipart/form-data" hx-target="#jobs" hx-swap="afterbegin"
@@ -27,7 +21,8 @@
     <div id="erro-envio" class="w-full"></div>
   </form>
 </div>
-{#- O Remover de um job concluído (hx-confirm) abre este diálogo pelo app.js. #}
+{#- O Remover de um job concluído e o Cancelar de uma gravação (hx-confirm) abrem este diálogo pelo
+    app.js, que troca o título e o botão pelos `data-confirmar-*` de quem pediu. #}
 <dialog id="confirmar" class="confirm-dialog" aria-labelledby="confirmar-titulo" aria-describedby="confirmar-texto">
   <form method="dialog">
     <h2 id="confirmar-titulo" class="text-headline">Excluir a transcrição?</h2>

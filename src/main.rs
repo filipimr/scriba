@@ -32,6 +32,12 @@ struct Cli {
     #[cfg(feature = "test-support")]
     #[arg(long)]
     fake_pipeline: bool,
+
+    /// Grava tons simulados no lugar do microfone e do som do PC (testes E2E); o roteiro
+    /// opcional fica em `<data-dir>/audio-falso.txt`.
+    #[cfg(feature = "test-support")]
+    #[arg(long)]
+    fake_audio: bool,
 }
 
 fn main() -> ExitCode {
@@ -54,6 +60,8 @@ fn main() -> ExitCode {
         paths: Paths::resolve(cli.data_dir, cli.output_dir),
         #[cfg(feature = "test-support")]
         fake_pipeline: cli.fake_pipeline,
+        #[cfg(feature = "test-support")]
+        fake_audio: cli.fake_audio,
     };
     match app::run(opts) {
         Ok(()) => ExitCode::SUCCESS,
