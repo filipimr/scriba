@@ -214,6 +214,28 @@ fn microfone_perdido_finaliza_os_arquivos() {
     assert_eq!(rec.stop(), Err(Error::NotRecording));
 }
 
+/// O computador dormiu: 60 s sem pacotes nas duas trilhas. A gravação termina com o que
+/// tinha, sem um minuto de silêncio no fim (na noite do teste de 1 h, a suspensão virava
+/// horas de silêncio).
+#[test]
+fn suspensao_termina_a_gravacao_sem_silencio_enorme() {
+    let source = Arc::new(FakeSource::with_speed(Script::tones(), 20.0));
+    let t = now_ms(&source);
+    source.edit(|s| {
+        let sleep = t + 3_000..t + 63_000;
+        s.mic.gaps = vec![sleep.clone()];
+        s.system.gaps = vec![sleep];
+    });
+    let (rec, _dir, done) = recorder(source, Limits::default());
+    rec.start(&Choice::default()).unwrap();
+    assert!(wait(60, || idle(&rec)));
+    let r = done.lock().unwrap()[0].clone();
+    assert_eq!(r.end, End::Suspended);
+    assert!(r.end.message().unwrap().contains("suspensão"));
+    let secs = wav(&r.dir, Track::Mic).len() as f64 / f64::from(RATE);
+    assert!(secs < 5.0, "{secs} s");
+}
+
 #[test]
 fn saida_invalidada_reabre_e_segue_gravando() {
     let source = Arc::new(FakeSource::with_speed(Script::tones(), SPEED));
@@ -556,6 +578,15 @@ mod hardware {
             .ok()
             .and_then(|m| m.parse().ok())
             .unwrap_or(60);
+        // A tela acesa durante o teste: com ela apagada, o Modern Standby deste notebook
+        // suspende tudo (na 1ª tentativa, a "1 h" durou 10 h de suspensões).
+        // SAFETY: só muda o pedido desta thread ao gerenciador de energia.
+        unsafe {
+            use windows_sys::Win32::System::Power::{
+                ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, SetThreadExecutionState,
+            };
+            SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
+        }
         let root = out_dir().join("longa");
         let _ = std::fs::remove_dir_all(&root);
         let before = common::working_set();

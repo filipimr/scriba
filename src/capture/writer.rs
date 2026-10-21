@@ -95,15 +95,25 @@ struct TrackWriter {
     first_ns: Option<u64>,
 }
 
-/// Um erro de escrita: o disco (o motivo provável) ou o reamostrador.
+/// Um erro de escrita: o disco (o motivo provável) ou o reamostrador; ou uma lacuna que não
+/// é perda de pacote, mas o computador que dormiu.
 enum WriteError {
     Disk(io::Error),
     Resample(String),
+    Suspended(u64),
 }
 
 impl WriteError {
     fn end(&self, track: Track) -> End {
         match self {
+            Self::Suspended(frames) => {
+                eprintln!(
+                    "gravação: {} sem pacotes por {:.0} s: suspensão",
+                    track.file(),
+                    *frames as f64 / f64::from(RATE)
+                );
+                End::Suspended
+            }
             Self::Disk(e) => {
                 eprintln!("gravação: não consegui gravar {}: {e}", track.file());
                 End::Disk
@@ -159,6 +169,9 @@ impl TrackWriter {
             let position = self.written + self.resampler.pending();
             let mut skip = 0;
             match aligner.decide(packet.t_ns, position) {
+                Action::Silence(frames) if frames > align::frames_in_ms(align::SUSPEND_MS) => {
+                    return Err(WriteError::Suspended(frames));
+                }
                 Action::Silence(frames) => {
                     if self.stats.received == self.mono.len() as u64 {
                         self.stats.startup += frames;
@@ -347,6 +360,30 @@ pub struct Session {
     reopens: Vec<(Track, u64)>,
     last_flush_ns: u64,
     last_disk_ns: u64,
+    /// O relógio na última passada, para notar a suspensão.
+    last_cycle_ns: u64,
+}
+
+/// Mantém o Windows acordado enquanto existe (`SetThreadExecutionState` vale por thread).
+struct KeepAwake;
+
+impl KeepAwake {
+    fn new() -> Self {
+        use windows_sys::Win32::System::Power::{
+            ES_CONTINUOUS, ES_SYSTEM_REQUIRED, SetThreadExecutionState,
+        };
+        // SAFETY: só muda o pedido desta thread ao gerenciador de energia.
+        unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) };
+        Self
+    }
+}
+
+impl Drop for KeepAwake {
+    fn drop(&mut self) {
+        use windows_sys::Win32::System::Power::{ES_CONTINUOUS, SetThreadExecutionState};
+        // SAFETY: devolve o pedido desta thread ao normal.
+        unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
+    }
 }
 
 /// As duas trilhas já abertas, na ordem de [`Track::ALL`].
@@ -375,6 +412,7 @@ impl Session {
             TrackWriter::new(track, consumer, wav, start.t0_ns).map_err(|e| match e {
                 WriteError::Disk(e) => e,
                 WriteError::Resample(e) => io::Error::other(e),
+                WriteError::Suspended(_) => io::Error::other("suspensão"),
             })
         };
         let tracks = [
@@ -401,11 +439,15 @@ impl Session {
             reopens: Vec::new(),
             last_flush_ns: start.t0_ns,
             last_disk_ns: start.t0_ns,
+            last_cycle_ns: start.t0_ns,
         })
     }
 
-    /// Grava até o Parar, o encerramento ou um fim automático, e fecha os arquivos.
+    /// Grava até o Parar, o encerramento ou um fim automático, e fecha os arquivos. Enquanto
+    /// grava, pede ao Windows para não suspender por inatividade (fechar a tampa ainda
+    /// suspende; aí a gravação termina com o que já tinha).
     pub fn run(mut self) -> Recording {
+        let _awake = KeepAwake::new();
         let end = loop {
             if let Err(end) = self.cycle() {
                 break end;
@@ -420,6 +462,16 @@ impl Session {
     }
 
     fn cycle(&mut self) -> Result<(), End> {
+        // A própria thread ficou parada muito tempo: o computador dormiu.
+        let woke = self.source.now_ns();
+        if woke.saturating_sub(self.last_cycle_ns) > align::SUSPEND_MS * 1_000_000 {
+            eprintln!(
+                "gravação: o relógio pulou {:.0} s entre duas passadas: suspensão",
+                (woke - self.last_cycle_ns) as f64 / 1e9
+            );
+            return Err(End::Suspended);
+        }
+        self.last_cycle_ns = woke;
         for t in &mut self.tracks {
             t.drain(&self.aligner).map_err(|e| e.end(t.track))?;
         }
@@ -531,8 +583,8 @@ impl Session {
             .max()
             .unwrap_or(0)
             .max(
-                // Um disco cheio não deve crescer as trilhas com silêncio.
-                if end == End::Disk {
+                // Um disco cheio ou uma suspensão não devem crescer as trilhas com silêncio.
+                if matches!(end, End::Disk | End::Suspended) {
                     0
                 } else {
                     self.aligner.end(now)

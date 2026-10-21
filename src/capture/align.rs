@@ -9,6 +9,9 @@ pub const RATE: u32 = 32_000;
 /// Acima disso, a diferença para o relógio vira silêncio (ou descarte) na hora: um buraco de
 /// verdade (um pacote perdido já tem ~10 ms). Abaixo, a correção é aos poucos.
 pub const GAP_MS: u64 = 8;
+/// Uma lacuna maior que isso não é um pacote perdido: o computador dormiu (ou o dispositivo
+/// devolveu um timestamp absurdo ao acordar). A gravação termina em vez de virar silêncio.
+pub const SUSPEND_MS: u64 = 30_000;
 /// Abaixo disso, nenhuma correção: o jitter dos timestamps não mexe no áudio.
 pub const DEADBAND_MS: u64 = 2;
 /// A correção da deriva se espalha por este tanto de áudio (0,4% de velocidade no máximo:
