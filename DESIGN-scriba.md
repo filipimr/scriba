@@ -294,6 +294,12 @@ components:
     iconColor: "{colors.on-primary}"
     rounded: "{rounded.pill}"
     size: 72px
+  record-button-disabled:
+    backgroundColor: "{colors.canvas}"
+    iconColor: "{colors.recording}"
+    rounded: "{rounded.pill}"
+    size: 72px
+    opacity: 0.5
   level-meter:
     backgroundColor: "{colors.on-dark-secondary}"
     fillColor: "{colors.on-dark}"
@@ -508,7 +514,8 @@ Regras do tema escuro:
 ### Estrutura da página
 
 - Container central de **980 px**; o leitor de transcrição limita o texto a 720 px.
-- De cima para baixo: `app-header` (preto, fixo) → painel de gravação (escuro) e dropzone lado a lado no desktop → lista "Recentes" de `job-card` → rodapé.
+- De cima para baixo: `app-header` (preto, fixo) → painel de gravação (escuro) e dropzone lado a lado no desktop → lista "Recentes" de `job-card` → rodapé. Uma tela só, sem abas.
+- Enquanto grava, a `recording-bar` fica fixa no rodapé da janela, em todas as páginas (início e leitor); a página ganha 64 px embaixo para ela não cobrir o rodapé, e os toasts sobem acima dela.
 - Desktop primeiro: o app roda no PC do usuário. Mesmo assim, a página não quebra em janelas estreitas.
 
 ### Quebras
@@ -545,7 +552,7 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 - **Pressionar:** todo botão encolhe para `scale({motion.press-scale})` — a microinteração do sistema.
 - **Durações:** `{motion.duration-fast}` (150 ms) para estados e `{motion.duration-base}` (250 ms) para entrada de toasts e diálogos, com `{motion.easing}`.
-- **Gravação:** o ponto vermelho pulsa (opacidade 1 → 0,4) em ciclo de `{motion.recording-pulse}`.
+- **Gravação:** o ponto vermelho da `recording-bar` pulsa (opacidade 1 → 0,4) em ciclo de `{motion.recording-pulse}`. O preenchimento do `level-meter` anima a largura em 100 ms, o intervalo das leituras.
 - **Progresso:** a barra anima a largura; nada de spinners indeterminados quando há porcentagem.
 - Com `prefers-reduced-motion`, todas as animações são desligadas; o pulso vira um ponto estático.
 
@@ -553,11 +560,11 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 ### Navegação
 
-**`app-header`** — Barra preta (`{colors.surface-black}`) de 52 px, fixa. À esquerda, ícone do app (24 px, versão branca) e wordmark. Ao centro ou à direita, as abas "Arquivos" e "Gravar" em `{typography.caption}`; a aba ativa fica em branco e as demais em `{colors.on-dark-secondary}`. Na ponta direita, o `{component.theme-toggle}` e "Sair" como `{component.text-link-on-dark}`.
+**`app-header`** — Barra preta (`{colors.surface-black}`) de 52 px, fixa. À esquerda, ícone do app (24 px, versão branca) e wordmark, que levam à página inicial. Na ponta direita, o `{component.theme-toggle}`. Sem abas: gravar e enviar arquivos ficam lado a lado na mesma tela, e a `recording-bar` acompanha a gravação nas outras páginas.
 
 **`theme-toggle`** — Botão de ícone de 36 px no header, que alterna em ciclo Sistema → Claro → Escuro. O ícone mostra o modo atual (monitor, sol, lua), em `{colors.on-dark-secondary}`, e o tooltip e o `aria-label` dizem o nome do modo ("Tema: Sistema"). A troca é aplicada na hora e salva na configuração.
 
-**`recording-bar`** — Aparece fixa no rodapé da janela enquanto há gravação, mesmo quando o usuário navega para outra aba. Parchment a 80% com `{elevation.backdrop}`, 64 px de altura. À esquerda: ponto `{colors.recording}` pulsante, "Gravando" e o timer em `{typography.timestamp}`. À direita: `{component.button-primary}` "Parar".
+**`recording-bar`** — Aparece fixa no rodapé da janela enquanto há gravação, em todas as páginas (início e leitor), inclusive depois de recarregar. Parchment a 80% com `{elevation.backdrop}`, 64 px de altura, padding 12 × 32 px (16 px nas laterais abaixo de 480 px). À esquerda: ponto `{colors.recording}` pulsante, "Gravando" e o timer em `{typography.timestamp}` `{colors.ink-secondary}`, com números tabulares. À direita: `{component.button-primary}` "Parar" (tooltip "Parar (Ctrl+Shift+R)"), desabilitado enquanto o pedido está a caminho. Some quando a gravação para, pelo Parar ou sozinha.
 
 ### Botões
 
@@ -569,7 +576,7 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 **`button-icon`** — Botão quadrado de 44 px com só um ícone (cancelar, excluir, fechar): fundo `{colors.divider-soft}`, ícone em `{colors.ink}`, pílula. Sempre com `aria-label`.
 
-**`button-danger`** — Só dentro de `confirm-dialog`, para a ação destrutiva confirmada ("Excluir"). Fundo `{colors.danger}`, igual nos dois temas. É a única exceção em que uma cor de status preenche um botão, e só depois que o usuário pediu a ação.
+**`button-danger`** — Só dentro de `confirm-dialog`, para a ação destrutiva confirmada ("Excluir", "Descartar"). Fundo `{colors.danger}`, igual nos dois temas. É a única exceção em que uma cor de status preenche um botão, e só depois que o usuário pediu a ação.
 
 **`text-link`** / **`text-link-on-dark`** — Links no texto, em `{colors.link}` (que se ajusta ao tema) e em `{colors.primary-on-dark}` dentro de superfícies sempre escuras, como o header e o painel de gravação. Sem sublinhado; com ícone, ele vem antes do texto ("‹ Recentes" no leitor), e a área de clique tem 44 px de altura.
 
@@ -619,13 +626,27 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 ### Gravação
 
-**`record-panel`** — O "modo gravação": card escuro (`{colors.surface-dark}`), `{rounded.lg}`, padding 48 px, texto branco. Centro: `{component.record-button}`, timer em `{typography.title}` com números tabulares, e dois `{component.level-meter}` ("Você" e "Outros"). Abaixo, os `{component.device-select}` de microfone e saída, recolhidos em "Ajustes". Dica fixa em `{typography.footnote}`: "Use fone de ouvido para não duplicar falas."
+**`record-panel`** — O "modo gravação": card escuro (`{colors.surface-dark}`), `{rounded.lg}`, padding 48 px (16 px abaixo de 768 px), texto branco. Centro: `{component.record-button}` com o rótulo abaixo, timer em `{typography.title}` com números tabulares, e dois `{component.level-meter}` ("Você" e "Outros"). Abaixo, os `{component.device-select}` de microfone e saída, recolhidos num `<details>` "Ajustes". Dica fixa em `{typography.footnote}` `{colors.on-dark-secondary}`: "Use fone de ouvido para não duplicar falas."
 
-**`record-button`** — Círculo de 72 px. Parado: fundo branco com círculo vermelho (`{colors.recording}`) de 28 px dentro e rótulo "Gravar" abaixo. Gravando (`{component.record-button-recording}`): fundo vermelho com quadrado branco de 24 px (parar) e rótulo "Parar". O rótulo vai fora do botão, em branco, porque o vermelho não tem contraste para texto.
+- **Parado:** botão "Gravar", timer em 00:00:00, medidores vazios.
+- **Gravando:** botão "Parar" (`{component.record-button-recording}`); o timer e os medidores andam ~10 vezes por segundo. Recarregar a página já mostra o painel gravando, com o tempo certo.
+- **Desabilitado:** enquanto o Gravar ou o Parar está a caminho do servidor, o botão fica em `{component.record-button-disabled}` (opacidade 0,5), e um segundo clique não faz nada.
+- **Erro:** a gravação não começou (sem microfone, microfone bloqueado pela privacidade do Windows, pouco disco): `{component.alert-inline}` abaixo dos medidores, com o que fazer ("Não encontrei um microfone. Conecte um e tente de novo."). O botão volta a "Gravar"; o próximo Gravar limpa o erro.
+- **Avisos durante a gravação**, abaixo dos medidores: "Microfone sem sinal" em `{component.status-badge-warning}` depois de 10 s de silêncio no microfone; e, se o computador suspendeu, a nota "O computador suspendeu: o tempo parado ficou de fora." em `{typography.footnote}` `{colors.on-dark-secondary}`.
+- **Fim automático** (dispositivo desconectado, disco quase cheio, limite de 12 h): o painel volta a parado, o card da gravação entra no topo de "Recentes" e um `{component.toast}` diz o motivo ("O microfone foi desconectado. A gravação parou e vai ser transcrita.").
 
-**`level-meter`** — Barra horizontal de 4 px: trilho `{colors.on-dark-secondary}` a 30%, preenchimento branco proporcional ao nível RMS, com rótulo em `{typography.footnote}`. Sem cor de alerta; se o sinal ficar mudo por 10 s, aparece um aviso em `{component.status-badge-warning}` ("Microfone sem sinal").
+**`record-button`** — Círculo de 72 px. Parado: fundo branco com círculo vermelho (`{colors.recording}`) de 28 px dentro e rótulo "Gravar" abaixo. Gravando (`{component.record-button-recording}`): fundo vermelho com quadrado branco de 24 px (parar) e rótulo "Parar". O rótulo vai fora do botão, em branco, porque o vermelho não tem contraste para texto. Pressionado: `scale(0.97)`. Foco: o anel padrão. Desabilitado: `{component.record-button-disabled}`. O tooltip e o `aria-label` dizem a ação ("Gravar (Ctrl+Shift+R)"); o botão mantém o id entre Gravar e Parar, e o foco fica nele.
 
-**`device-select`** — Select nativo estilizado: fundo branco, borda hairline, `{rounded.md}`, 44 px de altura, `{typography.callout}`. O dispositivo padrão do Windows aparece marcado "(padrão)". Um microfone Bluetooth mostra aviso de qualidade reduzida.
+**`level-meter`** — O `<meter>` nativo (0 a 1), dentro de um `<label>` com o rótulo "Você" ou "Outros" em `{typography.footnote}` à esquerda. Barra horizontal de 4 px: trilho `{colors.on-dark-secondary}` a 30%, preenchimento branco proporcional ao nível RMS em escala de decibéis (−60 dBFS vazio, 0 dBFS cheio, para a fala ocupar o meio da barra). Sem cor de alerta; se o sinal ficar mudo por 10 s, aparece um aviso em `{component.status-badge-warning}` ("Microfone sem sinal").
+
+**`device-select`** — Select nativo estilizado, com o rótulo ("Microfone", "Saída do som") em `{typography.footnote}` `{colors.on-dark-secondary}` acima: fundo branco, borda hairline, `{rounded.md}`, 44 px de altura, `{typography.callout}`.
+
+- A 1ª opção é "Padrão do Windows (nome do dispositivo de agora)", que acompanha as trocas do Windows durante a gravação; depois, cada dispositivo, com o padrão marcado "(padrão)".
+- A lista é lida de novo a cada abertura dos Ajustes. A escolha é salva na hora e vale na próxima gravação; um dispositivo salvo que sumiu volta a "Padrão do Windows".
+- Durante a gravação, os selects ficam desabilitados (fundo `{colors.divider-soft}`, texto `{colors.ink-tertiary}`), com a nota "Os dispositivos mudam depois que esta gravação parar."
+- Microfone Bluetooth (o escolhido, ou o padrão quando é ele): `{component.status-badge-warning}` abaixo do select, "Microfone Bluetooth: a qualidade do som cai durante a gravação." Só avisa; não bloqueia.
+
+**Card de gravação** — O mesmo `{component.job-card}`, com o ícone `mic` e o nome "Gravação de 20/10, 14:30". O Cancelar (na fila ou transcrevendo) e o Remover de uma gravação que falhou abrem o `{component.confirm-dialog}` "Descartar a gravação?", porque as trilhas são apagadas.
 
 ### Transcrição
 
@@ -633,7 +654,7 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 - Acima do título, o `{component.text-link}` "‹ Recentes" (ícone chevron-left), que volta à lista.
 - Cabeçalho: título (nome do arquivo ou "Gravação de 16/10, 14:30") em `{typography.title}`, metadados em `{typography.caption}` `{colors.ink-secondary}` (os mesmos do card: "47 min · 312 MB · 20/10/2026 14:30"), e as ações "Copiar texto" (primária), "Baixar .txt" e "Baixar .md" (secundárias), "Abrir pasta" (utilitária).
-- Parágrafos em `{typography.transcript}`, cada um começando com a marcação de tempo (`{component.transcript-timestamp}`, "00:00:08", na mesma linha) e, em gravações, o rótulo do falante (`{component.transcript-speaker}`: "Você" / "Outros"). Texto fora do formato (editado à mão) aparece como está, sem tempo e com as quebras de linha.
+- Parágrafos em `{typography.transcript}`, cada um começando com a marcação de tempo (`{component.transcript-timestamp}`, "00:00:08", na mesma linha) e, em gravações, o rótulo do falante (`{component.transcript-speaker}`: "Você:" / "Outros:", em peso 600 e `{colors.ink}`). Texto fora do formato (editado à mão) aparece como está, sem tempo e com as quebras de linha.
 - O texto é selecionável e copiável como texto puro. "Copiar texto" copia o `.txt` inteiro, com o cabeçalho e as marcações de tempo.
 - Ao copiar, um `{component.toast}` confirma: "Texto copiado".
 - Sem fala: `{component.empty-state}` "Nenhuma fala encontrada neste arquivo.", com as ações.
@@ -647,7 +668,7 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 - Também mostra o erro de uma ação ("Não encontrei a pasta “2026-10-20 1430 - Reunião”. Ela foi movida ou apagada."), no mesmo estilo e sem cor de status: o texto diz o que houve. O erro fica 6 s, para dar tempo de ler.
 
-**`confirm-dialog`** — Só para ações destrutivas (excluir job e arquivos). Fundo branco, `{rounded.lg}`, padding 32 px, `{elevation.floating}`, sobre um véu preto a 40%, com até 440 px de largura. Título em `{typography.headline}`, texto explicando o que será apagado, `{component.button-secondary}` "Cancelar" e `{component.button-danger}` "Excluir", alinhados à direita. Remover um job concluído: "Excluir a transcrição?" / "A pasta “2026-10-19 1430 - Reunião” vai para a Lixeira.".
+**`confirm-dialog`** — Só para ações destrutivas (excluir job e arquivos). Fundo branco, `{rounded.lg}`, padding 32 px, `{elevation.floating}`, sobre um véu preto a 40%, com até 440 px de largura. Título em `{typography.headline}`, texto explicando o que será apagado, `{component.button-secondary}` "Cancelar" e `{component.button-danger}` "Excluir", alinhados à direita. Remover um job concluído: "Excluir a transcrição?" / "A pasta “2026-10-19 1430 - Reunião” vai para a Lixeira.". Cancelar a transcrição de uma gravação (ou remover uma que falhou): "Descartar a gravação?" / "As trilhas gravadas serão apagadas.", com o botão "Descartar".
 
 - Abre com o foco em "Cancelar", a escolha segura.
 - Foco preso no diálogo (`<dialog>` modal); Esc cancela.
@@ -661,8 +682,8 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 - Contraste AA (4,5:1) em todo texto, nos dois temas; `{colors.ink-tertiary}` e `{colors.recording}` nunca carregam texto essencial.
 - Anel de foco visível de 2 px em `{colors.primary-focus}` em todo elemento interativo; nunca `outline: none` sem substituto.
-- Navegação completa por teclado. Atalho global **Ctrl+Shift+R** para Gravar / Parar, mostrado no tooltip do botão.
-- `aria-live="polite"` na entrada e no fim de cada job (não a cada %) e nos toasts; o timer de gravação anuncia só início e fim, não cada segundo.
+- Navegação completa por teclado. Atalho global **Ctrl+Shift+R** para Gravar / Parar em qualquer página, mostrado no tooltip do botão; ele toma o lugar do recarregar do navegador (conferido no Edge, que não o reserva).
+- `aria-live="polite"` na entrada e no fim de cada job (não a cada %) e nos toasts; a gravação anuncia só o início ("Gravação iniciada.") e o fim ("Gravação parada. Transcrevendo."); o timer fica fora da região viva.
 - Alvos de clique de no mínimo 44 × 44 px.
 - Estado nunca depende só de cor: badges têm texto, o botão de gravar troca de forma (círculo → quadrado).
 
@@ -671,6 +692,7 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 - Português do Brasil, frases curtas, tratamento por "você".
 - Botões com verbos diretos: "Gravar", "Parar", "Escolher arquivo", "Ver transcrição", "Copiar texto", "Baixar .txt", "Baixar .md", "Abrir pasta", "Tentar de novo", "Excluir", "Guardar áudio", "Descartar", "Mostrar no Explorer".
 - Confirmações curtas, sem ponto: "Texto copiado".
+- Gravação: "Gravando", "Ajustes", "Microfone", "Saída do som", "Padrão do Windows (…)", "(padrão)", "Microfone sem sinal"; avisos para leitores de tela "Gravação iniciada." e "Gravação parada. Transcrevendo."; fim automático "O microfone foi desconectado. A gravação parou e vai ser transcrita.", "A gravação chegou ao limite de 12 h e parou.".
 - Etapas no gerúndio: "Na fila", "Extraindo áudio…", "Transcrevendo… 42%", "Guardando áudio… 42%", "Cancelando…".
 - Estimativas arredondadas e sem falsa precisão: "Cerca de 4 min na GPU", "Menos de 1 min no processador". "Processador" no lugar de "CPU".
 - Erros dizem o que aconteceu e o que fazer: "Este arquivo não tem áudio. Escolha um vídeo com som." — nunca códigos ou jargão técnico.
@@ -716,4 +738,6 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 - **Ícone da bandeja do Windows:** precisa de variantes clara e escura, conforme o tema da barra de tarefas.
 - **Card concluído e leitor:** resolvido na etapa 4.5: as ações do card concluído ("Ver transcrição", "Baixar .txt", "Baixar .md", "Abrir pasta") numa linha própria, o `transcript-view` com o "‹ Recentes" e os estados sem fala e de transcrição ausente, o `toast` (também para os erros de ação) e o `button-utility` com 44 px de altura. Resolvidos na 4.4: a dropzone sem as caixinhas, o estilo do "Tentar de novo", o backend no rodapé e a estimativa no card, e o texto do `confirm-dialog`.
 - **Guardar o áudio:** resolvido na Fase 5 com o `audio-prompt` (YAML e prosa): a pergunta no card concluído, os estados escolhendo, guardando e guardado, o "Mostrar no Explorer" e o erro em toast. A janela "Salvar como" é a nativa do Windows, fora do design system. Na Fase 6, a gravação reaproveita o mesmo componente.
+- **Gravação ao vivo:** resolvido na etapa 6.3: os estados do `record-panel` e do `record-button` (gravando, desabilitado, erro, avisos, fim automático), o `level-meter` como `<meter>`, o `device-select` com "Padrão do Windows" e o aviso Bluetooth, a `recording-bar` em todas as páginas, o card de gravação e a confirmação do descarte. O Ctrl+Shift+R não é reservado pelo Edge e ficou como estava.
+- **Abas do `app-header`:** removidas na Fase 6 (uma tela só, com o painel e a dropzone lado a lado); o "Sair" também saiu, porque o app não tem login. Se uma segunda tela aparecer, as abas voltam a ser desenhadas.
 - **Link para a pasta de saídas no rodapé:** descrito em `footer`, ainda não implementado; o "Abrir pasta" de cada job cobre o caso por enquanto.
