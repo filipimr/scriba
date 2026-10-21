@@ -12,6 +12,9 @@
 //!   enorme mede "sem blocos").
 //!
 //! As transcrições longas ficam em `%TEMP%\scriba-longo`, para conferir o texto.
+//!
+//! `gravacao_real` transcreve as trilhas reais da etapa 6.1 com a "Você" da Maria misturada
+//! no microfone (deixa o `.txt` em `%TEMP%\scriba-gravacao\transcricoes`).
 
 mod common;
 
@@ -324,6 +327,265 @@ fn probe_das_fixtures() {
         engine.backend().as_deref(),
         Some("Transcrição no processador")
     );
+}
+
+/// As falas das fixtures `voce.wav`/`outros.wav` (a `CONVERSA` do `xtask fixtures`).
+const VOCE: [&str; 2] = [
+    "Obrigado. Eu preparei a planilha com os números do trimestre.",
+    "Combinado. Eu envio o relatório por email amanhã cedo.",
+];
+const OUTROS: [&str; 2] = [
+    "Bom dia a todos. Vamos começar pela revisão do orçamento anual.",
+    "Ótimo. Depois falamos do cronograma de entregas do projeto.",
+];
+/// Palavras que só um dos lados fala (sem acento, como em `merge::words`).
+const VOCE_WORDS: [&str; 4] = ["planilha", "trimestre", "relatorio", "email"];
+const OUTROS_WORDS: [&str; 4] = ["orcamento", "revisao", "cronograma", "entregas"];
+
+/// Uma gravação em `root` com as trilhas dadas, como o `Recorder` deixa.
+fn recording_from(root: &Path, mic: &Path, system: &Path) -> scriba::capture::Recording {
+    use scriba::capture::{End, Track, storage};
+    let id = JobId::generate();
+    let dir = storage::create(root, id).unwrap();
+    std::fs::copy(mic, dir.join(Track::Mic.file())).unwrap();
+    std::fs::copy(system, dir.join(Track::System.file())).unwrap();
+    storage::write_manifest(
+        &dir,
+        &storage::Manifest {
+            version: storage::MANIFEST_VERSION,
+            id: id.to_string(),
+            created: created(),
+            mic: "Microfone".into(),
+            output: "Alto-falantes".into(),
+            state: storage::RecState::Parada,
+        },
+    )
+    .unwrap();
+    storage::load(&dir, End::User).unwrap()
+}
+
+/// O texto de cada falante no `.txt`, em palavras normalizadas.
+fn speaker_blocks(txt: &str, speaker: transcript::Speaker) -> Vec<String> {
+    transcript::parse(txt)
+        .blocks
+        .into_iter()
+        .filter(|b| b.speaker == Some(speaker))
+        .map(|b| transcript::merge::words(&b.text).join(" "))
+        .collect()
+}
+
+fn hits(blocks: &[String], words: &[&str]) -> usize {
+    let all: Vec<&str> = blocks.iter().flat_map(|b| b.split(' ')).collect();
+    words.iter().filter(|w| all.contains(w)).count()
+}
+
+/// Uma gravação com eco (o microfone ouviu "Outros" a −12 dB, 60 ms depois): o texto sai
+/// rotulado, sem as falas de "Outros" repetidas como "Você", e o "Guardar áudio" mistura as
+/// duas trilhas e apaga a pasta da gravação.
+#[test]
+fn gravacao_sai_rotulada_e_sem_eco() {
+    let setup = Setup::new();
+    let root = setup.out.with_file_name("gravacoes");
+    let rec = recording_from(&root, &fixture("voce-com-eco.wav"), &fixture("outros.wav"));
+    let dir = rec.dir.clone();
+    let id = setup.jobs.submit_recording(rec);
+    let outputs = wait_done(&setup.jobs, id);
+    assert_eq!(outputs.dir, setup.out.join("2026-10-20 0915 - Gravação"));
+
+    let txt = std::fs::read_to_string(&outputs.txt).unwrap();
+    println!("{txt}");
+    // O microfone sozinho tem o eco transcrito: sem isso, o teste não provaria a remoção.
+    let mic = scriba::media::extract_audio(
+        &fixture("voce-com-eco.wav"),
+        |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let mic_alone: Vec<String> = Asr::new(vec![Plan::cpu()], base_models())
+        .transcribe(&mic, |_| {}, &AtomicBool::new(false))
+        .unwrap()
+        .segments
+        .iter()
+        .map(|s| transcript::merge::words(&s.text).join(" "))
+        .collect();
+    println!("microfone sozinho: {mic_alone:?}");
+    assert!(
+        hits(&mic_alone, &OUTROS_WORDS) >= 2,
+        "o eco não foi transcrito: {mic_alone:?}"
+    );
+    let parsed = transcript::parse(&txt);
+    assert!(parsed.recording, "{txt}");
+    assert_eq!(parsed.duration.as_deref(), Some("00:00:29"));
+    assert!(parsed.blocks.iter().all(|b| b.speaker.is_some()), "{txt}");
+    let voce = speaker_blocks(&txt, transcript::Speaker::Voce);
+    let outros = speaker_blocks(&txt, transcript::Speaker::Outros);
+    assert!(hits(&outros, &OUTROS_WORDS) >= 3, "{txt}");
+    assert!(hits(&voce, &VOCE_WORDS) >= 3, "{txt}");
+    assert_eq!(hits(&voce, &OUTROS_WORDS), 0, "eco em \"Você\": {txt}");
+    // Cada fala de "Outros" uma vez só, e cada uma de "Você" presente.
+    let all_voce = voce.join(" ");
+    for phrase in OUTROS {
+        let s = transcript::merge::similarity(phrase, &all_voce);
+        assert!(s < 0.5, "{phrase:?} repetida como Você ({s:.2}): {txt}");
+    }
+    for phrase in VOCE {
+        let s = transcript::merge::similarity(phrase, &all_voce);
+        assert!(s >= 0.6, "{phrase:?} faltou ({s:.2}): {txt}");
+    }
+
+    let manifest: Manifest =
+        serde_json::from_slice(&std::fs::read(outputs.dir.join(transcript::JOB_FILE)).unwrap())
+            .unwrap();
+    assert_eq!(manifest.media, MediaKind::Recording);
+    assert_eq!(manifest.name, "Gravação de 20/10, 09:15");
+    let left: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(!left.iter().any(|n| n.ends_with(".f32")), "{left:?}");
+
+    let chosen = outputs.dir.join("2026-10-20 0915 - Gravação.m4a");
+    let answer = chosen.clone();
+    setup
+        .jobs
+        .save_audio(id, move |_, _| Ok(Some(answer)))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !matches!(
+        setup.jobs.get(id).unwrap().state,
+        State::Done {
+            audio: Audio::Saved { .. },
+            ..
+        }
+    ) {
+        assert!(Instant::now() < deadline, "o áudio não terminou");
+        thread::sleep(Duration::from_millis(20));
+    }
+    let probe = scriba::media::probe(&chosen).unwrap();
+    assert!(
+        (probe.duration_ms as i64 - 29_479).abs() <= 100,
+        "{probe:?}"
+    );
+    assert!(!dir.exists(), "guardado apaga a gravação");
+}
+
+/// As trilhas reais da etapa 6.1 (`%TEMP%\scriba-gravacao\silencio`: 15 s da Câmara nos
+/// alto-falantes, 15 s sem nada, 15 s de novo, depois os marcadores) com a "Você" da Maria
+/// (`voce.wav`) misturada no microfone real a partir de 16 s: a 1ª fala dela cai no trecho
+/// sem nada tocando, a 2ª por cima da Câmara. Roda no backend do app (a GPU dedicada).
+///
+/// `cargo test --release --features vulkan --test engine -- --ignored --nocapture gravacao_real`
+/// (`SCRIBA_REC_DIR` troca a pasta da gravação).
+#[test]
+#[ignore = "hardware"]
+fn gravacao_real() {
+    use scriba::capture::{End, Track, storage};
+    let source = std::env::var("SCRIBA_REC_DIR").map_or_else(
+        |_| {
+            let root = std::env::temp_dir()
+                .join("scriba-gravacao")
+                .join("silencio");
+            std::fs::read_dir(&root)
+                .unwrap_or_else(|e| panic!("{}: {e} (rode a captura da 6.1)", root.display()))
+                .map(|e| e.unwrap().path())
+                .find(|p| p.join(storage::MANIFEST_FILE).is_file())
+                .expect("nenhuma gravação")
+        },
+        PathBuf::from,
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    let id = JobId::generate();
+    let dir = storage::create(tmp.path(), id).unwrap();
+    for track in Track::ALL {
+        std::fs::copy(source.join(track.file()), dir.join(track.file())).unwrap();
+    }
+    let mut manifest = storage::read_manifest(&source).unwrap();
+    manifest.id = id.to_string();
+    storage::write_manifest(&dir, &manifest).unwrap();
+
+    // A Maria no microfone real, a partir de 16 s.
+    const AT: usize = 16 * 32_000;
+    let mic_path = dir.join(Track::Mic.file());
+    let mut mic: Vec<i16> = hound::WavReader::open(&mic_path)
+        .unwrap()
+        .samples::<i16>()
+        .map(Result::unwrap)
+        .collect();
+    let voce: Vec<i16> = hound::WavReader::open(fixture("voce.wav"))
+        .unwrap()
+        .samples::<i16>()
+        .map(Result::unwrap)
+        .collect();
+    for (m, v) in mic[AT..].iter_mut().zip(&voce) {
+        *m = m.saturating_add(*v);
+    }
+    let mut w = hound::WavWriter::create(&mic_path, storage::wav_spec()).unwrap();
+    for s in &mic {
+        w.write_sample(*s).unwrap();
+    }
+    w.finalize().unwrap();
+    let rec = storage::load(&dir, End::Recovered).unwrap();
+    println!(
+        "{}: {:.1} s, microfone {:?}, saída {:?}",
+        source.display(),
+        rec.duration_ms as f64 / 1_000.0,
+        rec.mic,
+        rec.output
+    );
+
+    let out = std::env::temp_dir()
+        .join("scriba-gravacao")
+        .join("transcricoes");
+    let engine = Engine::new(out);
+    println!("{}", engine.backend().unwrap_or_default());
+    let job = Job::recording(rec, None);
+    let ctx = Ctx::new(Arc::new(AtomicBool::new(false)), |_, _| {});
+    let t0 = Instant::now();
+    let outputs = engine.run(&job, &ctx).unwrap();
+    let took = t0.elapsed();
+    let txt = std::fs::read_to_string(&outputs.txt).unwrap();
+    println!("{txt}\n{} em {took:.1?}", outputs.txt.display());
+
+    // A trilha do sistema sozinha, no mesmo motor: "Outros" sai igual (a mescla nunca a
+    // muda).
+    let system = scriba::media::extract_audio(
+        &dir.join(Track::System.file()),
+        |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let asr = Asr::detect();
+    let alone: Vec<String> = asr
+        .transcribe(&system, |_| {}, &AtomicBool::new(false))
+        .unwrap()
+        .segments
+        .into_iter()
+        .map(|s| s.text)
+        .collect();
+    let alone = alone.join(" ");
+    let outros = speaker_blocks(&txt, transcript::Speaker::Outros).join(" ");
+    let voce = speaker_blocks(&txt, transcript::Speaker::Voce);
+    let same = transcript::merge::similarity(&alone, &outros);
+    println!(
+        "\"Outros\" × sistema.wav sozinho: {same:.2} ({} palavras)",
+        outros.split(' ').count()
+    );
+    assert!(
+        outros.split(' ').count() >= 40,
+        "pouco texto em Outros: {txt}"
+    );
+    assert!(same >= 0.6, "{same:.2}");
+    let all_voce = voce.join(" ");
+    for phrase in VOCE {
+        let s = transcript::merge::similarity(phrase, &all_voce);
+        println!("\"Você\" × {phrase:?}: {s:.2}");
+        assert!(s >= 0.6, "{phrase:?} faltou ({s:.2})");
+    }
+    for block in &voce {
+        let s = transcript::merge::similarity(block, &outros);
+        println!("\"Você\" {block:?} × Outros: {s:.2}");
+        assert!(s < 0.6, "parágrafo \"Você\" repete \"Outros\": {block:?}");
+    }
 }
 
 /// O app de verdade com a GPU: detecção, rodapé, estimativa na GPU e o job concluído.

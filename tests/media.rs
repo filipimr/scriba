@@ -1,5 +1,5 @@
-//! `media::probe`, `media::extract_audio`, `media::extract_audio_into` e
-//! `media::encode_audio` com as fixtures reais e o FFmpeg estático.
+//! `media::probe`, `media::extract_audio`, `media::extract_audio_into`, `media::encode_audio`
+//! e `media::encode_mix` com as fixtures reais e o FFmpeg estático.
 //!
 //! `guardar_audio_longo` (local) codifica o áudio longo de `SCRIBA_LONG_AUDIO`, mede tempo e
 //! tamanho e deixa o `.m4a` em `%TEMP%\scriba-longo`:
@@ -379,6 +379,127 @@ fn guardar_sem_audio_ou_em_pasta_invalida_da_erro_amigavel() {
                 .into()
         )
     );
+}
+
+fn rms(samples: &[f32]) -> f64 {
+    (samples
+        .iter()
+        .map(|&s| f64::from(s) * f64::from(s))
+        .sum::<f64>()
+        / samples.len() as f64)
+        .sqrt()
+}
+
+fn mix(inputs: &[&Path], output: &Path) -> Result<(), Error> {
+    media::encode_mix(inputs, output, |_| {}, &AtomicBool::new(false))
+}
+
+/// Uma trilha de gravação curta: `secs` de um tom, a 32 kHz mono 16-bit.
+fn short_track(path: &Path, secs: f64) {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 32_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut w = hound::WavWriter::create(path, spec).unwrap();
+    for i in 0..(secs * 32_000.0) as u32 {
+        let t = f64::from(i) / 32_000.0;
+        w.write_sample(((t * 440.0 * std::f64::consts::TAU).sin() * 8_000.0) as i16)
+            .unwrap();
+    }
+    w.finalize().unwrap();
+}
+
+/// "Guardar áudio" de uma gravação: as duas trilhas viram um `.m4a` só, com a duração da
+/// mais longa e as duas vozes.
+#[test]
+fn gravacao_vira_um_m4a_com_as_duas_trilhas() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (voce, outros) = (fixture("voce.wav"), fixture("outros.wav"));
+    let out = tmp.path().join("Gravação.m4a.parte");
+    let mut seen = Vec::new();
+    media::encode_mix(
+        &[&voce, &outros],
+        &out,
+        |p| seen.push(p),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(seen.first(), Some(&0), "{seen:?}");
+    assert_eq!(seen.last(), Some(&100), "{seen:?}");
+    assert!(seen.windows(2).all(|w| w[0] < w[1]), "{seen:?}");
+
+    let m4a = inspect(&out);
+    let original = secs(&extract(&voce).unwrap());
+    println!("mistura: {m4a:?}, trilha {original:.3} s");
+    assert!(
+        m4a.aac && m4a.channels == 1 && m4a.rate == 32_000,
+        "{m4a:?}"
+    );
+    assert_eq!(&m4a.brand, b"M4A ");
+    assert!((m4a.secs - original).abs() <= 0.1, "{m4a:?}");
+    // As falas não se sobrepõem: a mistura tem a energia das duas.
+    let (mixed, alone) = (extract(&out).unwrap(), extract(&voce).unwrap());
+    assert!(
+        rms(&mixed) > rms(&alone) * 1.2,
+        "{} × {}",
+        rms(&mixed),
+        rms(&alone)
+    );
+
+    // Trilhas de tamanhos diferentes: a mais curta vira silêncio no fim.
+    let short = tmp.path().join("curta.wav");
+    short_track(&short, 2.0);
+    let out = tmp.path().join("diferentes.m4a");
+    mix(&[&short, &outros], &out).unwrap();
+    assert!((inspect(&out).secs - original).abs() <= 0.1);
+    let out = tmp.path().join("so-curta.m4a");
+    mix(&[&short], &out).unwrap();
+    assert!((inspect(&out).secs - 2.0).abs() <= 0.1);
+}
+
+#[test]
+fn cancelar_a_mistura_nao_deixa_arquivo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("cancelado.m4a");
+    let cancel = AtomicBool::new(false);
+    let err = media::encode_mix(
+        &[&fixture("voce.wav"), &fixture("outros.wav")],
+        &out,
+        |p| {
+            if p >= 30 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        },
+        &cancel,
+    )
+    .unwrap_err();
+    assert_eq!(err, Error::Canceled);
+    assert!(!out.exists());
+}
+
+#[test]
+fn mistura_fora_do_formato_da_erro_amigavel() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("ruim.m4a");
+    // O `fala.wav` é de 16 kHz: não é uma trilha da gravação junto da outra.
+    for inputs in [
+        vec![fixture("voce.wav"), fixture("fala.wav")],
+        vec![fixture("fala.mp3")],
+        vec![tmp.path().join("nao-existe.wav")],
+    ] {
+        let inputs: Vec<&Path> = inputs.iter().map(PathBuf::as_path).collect();
+        assert_eq!(
+            mix(&inputs, &out).unwrap_err(),
+            Error::Unreadable,
+            "{inputs:?}"
+        );
+        assert!(!out.exists());
+    }
+    assert_eq!(mix(&[], &out).unwrap_err(), Error::NotMedia);
+    let err = mix(&[&fixture("voce.wav")], &tmp.path().join("nao/existe.m4a")).unwrap_err();
+    assert_eq!(err, Error::Encode);
 }
 
 #[test]
