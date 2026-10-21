@@ -1,8 +1,10 @@
 //! Scriba: grava e transcreve. Por enquanto, a UI, a fila de jobs e o pipeline de
-//! transcrição de arquivos (`engine`) com o "Guardar áudio", e o `--self-test` da release.
+//! transcrição de arquivos (`engine`) com o "Guardar áudio", a captura da gravação ao vivo
+//! (`capture`, ainda fora da UI) e o `--self-test` da release.
 
 pub mod app;
 pub mod asr;
+pub mod capture;
 pub mod clock;
 pub mod config;
 pub mod dialog;
