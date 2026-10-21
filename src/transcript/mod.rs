@@ -2,7 +2,13 @@
 //! 1,5 s quebra o parágrafo), com `[hh:mm:ss]` no início de cada um e um cabeçalho com o
 //! arquivo, a data e a duração. Sai em `.txt` (UTF-8, CRLF), que o leitor lê de volta com
 //! [`parse`], e em `.md`.
+//!
+//! Numa gravação, cada parágrafo tem o falante ("Você", o microfone; "Outros", o som do PC)
+//! depois do tempo, e o cabeçalho começa com `Gravação:`; só então o `parse` lê os rótulos,
+//! e uma transcrição de arquivo nunca ganha rótulo. [`merge`] junta as duas trilhas e tira o
+//! eco.
 
+pub mod merge;
 mod output;
 
 pub use output::{
@@ -15,25 +21,76 @@ use crate::clock::LocalTime;
 /// Pausa entre segmentos acima da qual começa um novo parágrafo.
 pub const PAUSE_MS: u64 = 1_500;
 
+/// Quem falou, numa gravação.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Speaker {
+    /// O microfone.
+    Voce,
+    /// O som do PC.
+    Outros,
+}
+
+impl Speaker {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Voce => "Você",
+            Self::Outros => "Outros",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Segment {
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
+    /// Só numa gravação.
+    pub speaker: Option<Speaker>,
+}
+
+impl Segment {
+    /// Um segmento de arquivo, sem falante.
+    pub fn new(start_ms: u64, end_ms: u64, text: impl Into<String>) -> Self {
+        Self {
+            start_ms,
+            end_ms,
+            text: text.into(),
+            speaker: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Paragraph {
     pub start_ms: u64,
     pub text: String,
+    pub speaker: Option<Speaker>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Header {
-    /// Nome do arquivo original.
+    /// Nome do arquivo original; numa gravação, "Gravação de 20/10, 14:30".
     pub file: String,
     pub date: LocalTime,
     pub duration_ms: u64,
+    /// Uma gravação ao vivo: o cabeçalho diz as duas fontes e os parágrafos têm falante.
+    pub recording: bool,
+}
+
+/// O que a pasta e o título usam no lugar do nome de arquivo numa gravação.
+pub const RECORDING_NAME: &str = "Gravação";
+/// As fontes, no cabeçalho de uma gravação.
+pub const SPEAKERS: &str = "Você (microfone) e Outros (som do PC)";
+
+impl Header {
+    /// O nome que entra na pasta da saída (`AAAA-MM-DD HHmm - nome`).
+    pub fn folder_base(&self) -> &str {
+        if self.recording {
+            RECORDING_NAME
+        } else {
+            &self.file
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,7 +109,7 @@ impl Transcript {
 }
 
 /// Junta os segmentos em parágrafos. Segmentos sem texto são ignorados, e o espaço em
-/// branco do texto vira um espaço só.
+/// branco do texto vira um espaço só. A troca de falante também quebra o parágrafo.
 pub fn paragraphs(segments: &[Segment]) -> Vec<Paragraph> {
     let mut out: Vec<Paragraph> = Vec::new();
     let mut last_end: Option<u64> = None;
@@ -62,13 +119,17 @@ pub fn paragraphs(segments: &[Segment]) -> Vec<Paragraph> {
             continue;
         }
         match (out.last_mut(), last_end) {
-            (Some(p), Some(end)) if segment.start_ms.saturating_sub(end) <= PAUSE_MS => {
+            (Some(p), Some(end))
+                if segment.start_ms.saturating_sub(end) <= PAUSE_MS
+                    && p.speaker == segment.speaker =>
+            {
                 p.text.push(' ');
                 p.text.push_str(&text);
             }
             _ => out.push(Paragraph {
                 start_ms: segment.start_ms,
                 text,
+                speaker: segment.speaker,
             }),
         }
         last_end = Some(segment.end_ms);
@@ -93,38 +154,63 @@ pub fn timestamp(ms: u64) -> String {
 }
 
 const FILE_KEY: &str = "Arquivo:";
+const RECORDING_KEY: &str = "Gravação:";
 const DATE_KEY: &str = "Data:";
 const DURATION_KEY: &str = "Duração:";
+
+/// `Você: ` ou `Outros: `, o começo do texto de um parágrafo de gravação.
+fn speaker_prefix(speaker: Option<Speaker>) -> String {
+    speaker.map_or_else(String::new, |s| format!("{}: ", s.label()))
+}
 
 /// O `.txt`: cabeçalho, linha em branco e um parágrafo por linha, separados por linhas em
 /// branco. UTF-8 com CRLF, para o Bloco de Notas antigo.
 pub fn render_txt(t: &Transcript) -> String {
+    let first = if t.header.recording {
+        format!("{RECORDING_KEY} {SPEAKERS}")
+    } else {
+        format!("{FILE_KEY} {}", normalize(&t.header.file))
+    };
     let mut lines = vec![
-        format!("{FILE_KEY} {}", normalize(&t.header.file)),
+        first,
         format!("{DATE_KEY} {}", t.header.date.display()),
         format!("{DURATION_KEY} {}", timestamp(t.header.duration_ms)),
     ];
     for p in &t.paragraphs {
         lines.push(String::new());
-        lines.push(format!("[{}] {}", timestamp(p.start_ms), p.text));
+        lines.push(format!(
+            "[{}] {}{}",
+            timestamp(p.start_ms),
+            speaker_prefix(p.speaker),
+            p.text
+        ));
     }
     let mut out = lines.join("\r\n");
     out.push_str("\r\n");
     out
 }
 
-/// O `.md`: título com o nome do arquivo, data e duração numa lista e `**[hh:mm:ss]**`
-/// abrindo cada parágrafo.
+/// O `.md`: título com o nome do arquivo (ou "Gravação de" e a data), data e duração numa
+/// lista e `**[hh:mm:ss]**` abrindo cada parágrafo (`**[hh:mm:ss] Você:**` numa gravação).
 pub fn render_md(t: &Transcript) -> String {
+    let title = if t.header.recording {
+        format!("{RECORDING_NAME} de {}", t.header.date.display())
+    } else {
+        normalize(&t.header.file)
+    };
     let mut out = format!(
         "# {}\n\n- Data: {}\n- Duração: {}\n",
-        escape_md(&normalize(&t.header.file)),
+        escape_md(&title),
         t.header.date.display(),
         timestamp(t.header.duration_ms)
     );
+    if t.header.recording {
+        out.push_str(&format!("- Falantes: {SPEAKERS}\n"));
+    }
     for p in &t.paragraphs {
+        let speaker = p.speaker.map_or_else(String::new, |s| format!(" {}:", s.label()));
         out.push_str(&format!(
-            "\n**[{}]** {}\n",
+            "\n**[{}]{speaker}** {}\n",
             timestamp(p.start_ms),
             escape_md(&p.text)
         ));
@@ -150,6 +236,8 @@ pub struct Parsed {
     pub file: Option<String>,
     pub date: Option<String>,
     pub duration: Option<String>,
+    /// O cabeçalho começa com `Gravação:`: os parágrafos têm falante.
+    pub recording: bool,
     pub blocks: Vec<Block>,
 }
 
@@ -159,6 +247,8 @@ pub struct Parsed {
 pub struct Block {
     pub start_ms: Option<u64>,
     pub text: String,
+    /// Só numa gravação, e só se o parágrafo tem tempo e rótulo.
+    pub speaker: Option<Speaker>,
 }
 
 pub fn parse(text: &str) -> Parsed {
@@ -186,6 +276,7 @@ pub fn parse(text: &str) -> Parsed {
         for line in first {
             match header_line(line) {
                 Some((FILE_KEY, v)) => parsed.file = Some(v.to_string()),
+                Some((RECORDING_KEY, _)) => parsed.recording = true,
                 Some((DATE_KEY, v)) => parsed.date = Some(v.to_string()),
                 Some((_, v)) => parsed.duration = Some(v.to_string()),
                 None => {}
@@ -198,20 +289,40 @@ pub fn parse(text: &str) -> Parsed {
             Some((ms, rest)) => (Some(ms), rest),
             None => (None, lines[0]),
         };
+        let (speaker, first) = match start_ms {
+            Some(_) if parsed.recording => split_speaker(first),
+            _ => (None, first),
+        };
         let mut text = first.to_string();
         for line in &lines[1..] {
             text.push('\n');
             text.push_str(line);
         }
-        parsed.blocks.push(Block { start_ms, text });
+        parsed.blocks.push(Block {
+            start_ms,
+            text,
+            speaker,
+        });
     }
     parsed
 }
 
 fn header_line(line: &str) -> Option<(&'static str, &str)> {
-    [FILE_KEY, DATE_KEY, DURATION_KEY]
+    [FILE_KEY, RECORDING_KEY, DATE_KEY, DURATION_KEY]
         .into_iter()
         .find_map(|key| line.strip_prefix(key).map(|v| (key, v.trim())))
+}
+
+/// `Você: resto` → o falante e o resto.
+fn split_speaker(text: &str) -> (Option<Speaker>, &str) {
+    [Speaker::Voce, Speaker::Outros]
+        .into_iter()
+        .find_map(|s| {
+            text.strip_prefix(s.label())
+                .and_then(|r| r.strip_prefix(": "))
+                .map(|rest| (Some(s), rest))
+        })
+        .unwrap_or((None, text))
 }
 
 /// `[hh:mm:ss] resto` → milissegundos e o resto.
