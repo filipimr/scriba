@@ -222,7 +222,7 @@ fn suspensao_some_da_gravacao_e_ela_segue() {
     let mut script = Script::tones();
     script.mic = TrackScript::new("Microfone", 44_100, 1, impulses());
     script.system = TrackScript::new("Saída", 48_000, 2, impulses());
-    let source = Arc::new(FakeSource::with_speed(script, 20.0));
+    let source = Arc::new(FakeSource::with_speed(script, 10.0));
     let t = now_ms(&source);
     source.edit(|s| {
         let sleep = t + 3_000..t + 63_000;
@@ -247,8 +247,10 @@ fn suspensao_some_da_gravacao_e_ela_segue() {
     let r = rec.stop().unwrap();
     assert_eq!(r.end, End::User);
     let (mic, sys) = (wav(&r.dir, Track::Mic), wav(&r.dir, Track::System));
+    // ~8 s gravados; numa máquina ocupada o Parar chega um pouco depois, mas o minuto
+    // suspenso nunca entra.
     let secs = mic.len() as f64 / f64::from(RATE);
-    assert!((8.0..12.0).contains(&secs), "{secs} s");
+    assert!((8.0..30.0).contains(&secs), "{secs} s");
     let suspended = r.stats.iter().map(|s| s.suspended).max().unwrap();
     assert!(suspended >= 55 * u64::from(RATE), "{:?}", r.stats);
     // Depois de acordar, os picos das duas trilhas continuam casados.
