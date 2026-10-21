@@ -43,6 +43,11 @@ impl Paths {
     pub fn uploads_dir(&self) -> PathBuf {
         self.data_dir.join("uploads")
     }
+
+    /// As gravações ao vivo, uma pasta por gravação, até a resposta a "Guardar o áudio?".
+    pub fn recordings_dir(&self) -> PathBuf {
+        self.data_dir.join("gravacoes")
+    }
 }
 
 /// Modo de tema escolhido no header. `System` segue o Windows.
@@ -159,5 +164,6 @@ mod tests {
         assert_eq!(p.data_dir, PathBuf::from("d"));
         assert_eq!(p.output_dir, PathBuf::from("o"));
         assert_eq!(p.instance_file(), PathBuf::from("d").join("instance.json"));
+        assert_eq!(p.recordings_dir(), PathBuf::from("d").join("gravacoes"));
     }
 }

@@ -1,6 +1,7 @@
 //! Ciclo de vida do app: instância única, servidor local e navegador.
 
 use std::io::Write;
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -42,6 +43,7 @@ pub fn run(opts: Options) -> anyhow::Result<()> {
     // Só depois de confirmar que esta é a única instância: a fila esvazia `uploads/`.
     let (jobs, worker) = Jobs::start(opts.paths.uploads_dir(), pipeline(&opts))
         .context("preparando a pasta de uploads")?;
+    resume_recordings(&jobs, &opts.paths.recordings_dir());
     let instance = Instance::new(listener.local_addr()?.port());
     instance.write(&file)?;
     let opener = opener(&opts);
@@ -72,6 +74,19 @@ pub fn run(opts: Options) -> anyhow::Result<()> {
     }
     instance.remove(&file);
     result.context("servidor")
+}
+
+/// As gravações que a execução anterior não transcreveu (Ctrl+C, crash) voltam à fila, da
+/// mais antiga para a mais nova; as já transcritas, vazias ou ilegíveis são apagadas.
+/// Devolve quantas voltaram.
+pub fn resume_recordings(jobs: &Jobs, root: &Path) -> usize {
+    let found = crate::capture::recover(root);
+    let count = found.len();
+    for rec in found {
+        eprintln!("gravação retomada: {}", rec.dir.display());
+        jobs.submit_recording(rec);
+    }
+    count
 }
 
 /// O `Engine` detecta as GPUs agora, antes de o servidor responder.

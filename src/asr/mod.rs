@@ -456,11 +456,7 @@ impl Loaded {
             }
             let (start_ms, end_ms) =
                 map.segment_ms(segment.start_timestamp(), segment.end_timestamp());
-            segments.push(Segment {
-                start_ms,
-                end_ms,
-                text,
-            });
+            segments.push(Segment::new(start_ms, end_ms, text));
         }
         Ok(())
     }

@@ -13,7 +13,7 @@ use super::AppState;
 use super::jobs::Card;
 use super::pages::{Layout, render};
 use crate::config::Theme;
-use crate::jobs::{Job, Outputs, State as JobState};
+use crate::jobs::{Job, Media, Outputs, State as JobState};
 use crate::transcript::{self, clean_name};
 
 /// O que o leitor mostra. Sem `loaded`, só o título, os metadados e o alerta.
@@ -77,6 +77,19 @@ impl Kind {
             Self::Txt => &outputs.txt,
             Self::Md => &outputs.md,
         }
+    }
+}
+
+/// De onde vem o nome dos downloads: o nome original; numa gravação, o da pasta da saída
+/// ("2026-10-20 1430 - Gravação"), porque o nome na lista tem "/" e ":".
+pub fn download_base(job: &Job) -> String {
+    match job.media {
+        Media::Recording => format!(
+            "{} - {}",
+            job.created.folder_stamp(),
+            transcript::RECORDING_NAME
+        ),
+        Media::Video | Media::Audio => job.name.clone(),
     }
 }
 
@@ -151,8 +164,8 @@ pub fn view(job: &Job, outputs: &Outputs, read: io::Result<Vec<u8>>) -> ReaderVi
                 .collect();
             let loaded = Loaded {
                 id: card.id.clone(),
-                txt_name: download_name(&job.name, Kind::Txt),
-                md_name: download_name(&job.name, Kind::Md),
+                txt_name: download_name(&download_base(job), Kind::Txt),
+                md_name: download_name(&download_base(job), Kind::Md),
                 text,
                 paragraphs,
             };
@@ -230,8 +243,9 @@ async fn download(state: &AppState, id: &str, kind: Kind) -> Response {
     let path = kind.path(&outputs);
     match tokio::fs::read(path).await {
         Ok(bytes) => {
-            let disposition = HeaderValue::from_str(&content_disposition(&job.name, kind))
-                .unwrap_or_else(|_| HeaderValue::from_static("attachment"));
+            let disposition =
+                HeaderValue::from_str(&content_disposition(&download_base(&job), kind))
+                    .unwrap_or_else(|_| HeaderValue::from_static("attachment"));
             (
                 [
                     (header::CONTENT_TYPE, HeaderValue::from_static(kind.mime())),
@@ -331,6 +345,21 @@ mod tests {
             "{value}"
         );
         assert!(HeaderValue::from_str(&value).is_ok());
+    }
+
+    #[test]
+    fn download_de_gravacao_usa_o_nome_da_pasta() {
+        let rec = Job {
+            media: Media::Recording,
+            name: "Gravação de 20/10, 14:30".into(),
+            ..job(Outputs::default())
+        };
+        assert_eq!(
+            download_name(&download_base(&rec), Kind::Txt),
+            "2026-10-20 1430 - Gravação - transcrição.txt"
+        );
+        let file = job(Outputs::default());
+        assert_eq!(download_base(&file), file.name);
     }
 
     fn job(outputs: Outputs) -> Job {

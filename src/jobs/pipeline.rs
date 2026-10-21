@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::model::{Failure, Job, Outputs, Probe, Stage};
+use super::model::{Estimate, Failure, Job, Outputs, Probe, Stage};
 
 pub trait Pipeline: Send + Sync {
     /// Lê o arquivo recém-enviado: tipo, duração e estimativa. Um erro recusa o envio com a
@@ -15,11 +15,17 @@ pub trait Pipeline: Send + Sync {
     /// Onde a transcrição roda, para o rodapé ("Transcrição na GPU: …").
     fn backend(&self) -> Option<String>;
 
+    /// Quanto leva transcrever um arquivo de `duration_ms`; a gravação usa o dobro.
+    fn estimate(&self, _duration_ms: u64) -> Option<Estimate> {
+        None
+    }
+
     /// Roda na thread do worker. Deve chamar `ctx.check()?` com frequência para atender ao
-    /// cancelamento.
+    /// cancelamento. Numa gravação, `job.input` é a pasta com as duas trilhas.
     fn run(&self, job: &Job, ctx: &Ctx) -> Result<Outputs, Failure>;
 
-    /// "Guardar áudio": grava o áudio do envio do job concluído em `output` (um `.m4a`).
+    /// "Guardar áudio": grava o áudio do envio do job concluído em `output` (um `.m4a`; numa
+    /// gravação, as duas trilhas misturadas).
     /// Roda numa thread própria, fora do worker. `progress` vai de 0 a 100; com `cancel`,
     /// devolve `Failure::Canceled`. Em erro, não deixa `output` para trás.
     fn save_audio(

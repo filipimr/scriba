@@ -1,6 +1,7 @@
 //! A gravação em disco: `<data-dir>/gravacoes/<id>/` com `mic.wav`, `sistema.wav` (32 kHz mono
 //! 16-bit) e o `gravacao.json`. Fica até a resposta a "Guardar o áudio?"; uma gravação que o
-//! app não chegou a transcrever (Ctrl+C, crash) é achada por [`recover`] ao abrir o app.
+//! app não chegou a transcrever (Ctrl+C, crash) é achada por [`recover`] ao abrir o app, e
+//! uma já transcrita que ficou sem resposta (crash) é apagada.
 
 use std::fs;
 use std::io;
@@ -31,6 +32,8 @@ pub enum RecState {
     /// Gravando, ou o app caiu no meio.
     Gravando,
     Parada,
+    /// A transcrição concluiu: só falta a resposta a "Guardar o áudio?".
+    Transcrita,
 }
 
 /// O `gravacao.json`, versão 1.
@@ -145,6 +148,24 @@ pub fn read_manifest(dir: &Path) -> Option<Manifest> {
     serde_json::from_slice(&bytes).ok()
 }
 
+/// Marca a gravação como transcrita: se o app cair antes da resposta a "Guardar o áudio?",
+/// o [`recover`] a apaga em vez de transcrevê-la de novo.
+pub fn mark_transcribed(dir: &Path) -> io::Result<()> {
+    let manifest = read_manifest(dir).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "gravacao.json ausente ou inválido",
+        )
+    })?;
+    write_manifest(
+        dir,
+        &Manifest {
+            state: RecState::Transcrita,
+            ..manifest
+        },
+    )
+}
+
 /// Frames do WAV da trilha, pelo cabeçalho (atualizado a cada `flush`); `None` se ilegível.
 pub fn wav_frames(dir: &Path, track: Track) -> Option<u64> {
     let reader = hound::WavReader::open(dir.join(track.file())).ok()?;
@@ -179,8 +200,9 @@ pub fn load(dir: &Path, end: End) -> Option<Recording> {
 }
 
 /// As gravações em `root` que sobraram de uma execução anterior, da mais antiga para a mais
-/// nova. As vazias (nada chegou ao disco) ou ilegíveis são apagadas, e os temporários da
-/// transcrição (`.f32`) também.
+/// nova. As vazias (nada chegou ao disco) ou ilegíveis são apagadas, as já transcritas
+/// também (a transcrição está na pasta da saída; só faltava a resposta a "Guardar o
+/// áudio?"), e os temporários da transcrição (`.f32`) também.
 pub fn recover(root: &Path) -> Vec<Recording> {
     let Ok(entries) = fs::read_dir(root) else {
         return Vec::new();
@@ -192,6 +214,11 @@ pub fn recover(root: &Path) -> Vec<Recording> {
             continue;
         }
         remove_spools(&dir);
+        if read_manifest(&dir).is_some_and(|m| m.state == RecState::Transcrita) {
+            eprintln!("gravação já transcrita apagada: {}", dir.display());
+            remove_dir_quietly(&dir);
+            continue;
+        }
         match load(&dir, End::Recovered) {
             Some(rec) if rec.duration_ms > 0 => found.push(rec),
             _ => {
@@ -316,6 +343,25 @@ mod tests {
         assert!(!good.join("mic.f32").exists());
         assert!(!empty.exists() && !broken.exists());
         assert!(recover(&root.path().join("nada")).is_empty());
+    }
+
+    #[test]
+    fn gravacao_ja_transcrita_nao_volta() {
+        let root = tempfile::tempdir().unwrap();
+        let id = JobId::generate();
+        let dir = create(root.path(), id).unwrap();
+        write_manifest(&dir, &manifest(id)).unwrap();
+        wav(&dir, Track::Mic, 32_000);
+        wav(&dir, Track::System, 32_000);
+        mark_transcribed(&dir).unwrap();
+        let json = fs::read_to_string(dir.join(MANIFEST_FILE)).unwrap();
+        assert!(json.contains(r#""state": "transcrita""#), "{json}");
+        assert_eq!(read_manifest(&dir).unwrap().mic, "Microfone");
+        assert!(recover(root.path()).is_empty());
+        assert!(!dir.exists());
+        // Sem manifesto não há o que marcar.
+        let other = create(root.path(), JobId::generate()).unwrap();
+        assert!(mark_transcribed(&other).is_err());
     }
 
     /// O app caiu no meio: o WAV vale até o último `flush`, como a gravação faz a cada 5 s.

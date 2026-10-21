@@ -43,8 +43,9 @@ impl Worker {
     }
 
     /// Cancela o job em andamento e as gravações de áudio, espera as threads terminarem
-    /// por até `timeout` e apaga os envios que esperavam a resposta a "Guardar o áudio?".
-    /// Devolve `false` se o pipeline não atendeu ao cancelamento a tempo.
+    /// por até `timeout` e apaga os envios e as gravações transcritas que esperavam a
+    /// resposta a "Guardar o áudio?". Devolve `false` se o pipeline não atendeu ao
+    /// cancelamento a tempo.
     pub fn shutdown(mut self, timeout: Duration) -> bool {
         self.jobs.stop();
         let deadline = Instant::now() + timeout;
@@ -52,7 +53,7 @@ impl Worker {
         for thread in self.jobs.saving_threads() {
             stopped &= wait(thread, deadline);
         }
-        self.jobs.clear_uploads();
+        self.jobs.clear_media();
         stopped
     }
 }

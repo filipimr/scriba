@@ -208,7 +208,9 @@ pub fn render_md(t: &Transcript) -> String {
         out.push_str(&format!("- Falantes: {SPEAKERS}\n"));
     }
     for p in &t.paragraphs {
-        let speaker = p.speaker.map_or_else(String::new, |s| format!(" {}:", s.label()));
+        let speaker = p
+            .speaker
+            .map_or_else(String::new, |s| format!(" {}:", s.label()));
         out.push_str(&format!(
             "\n**[{}]{speaker}** {}\n",
             timestamp(p.start_ms),

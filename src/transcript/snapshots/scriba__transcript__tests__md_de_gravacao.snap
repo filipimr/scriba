@@ -1,0 +1,15 @@
+---
+source: src/transcript/tests.rs
+expression: render_md(&recording())
+---
+# Gravação de 19/10/2026 14:30
+
+- Data: 19/10/2026 14:30
+- Duração: 00:47:12
+- Falantes: Você (microfone) e Outros (som do PC)
+
+**[00:00:03] Você:** Bom dia, pessoal.
+
+**[00:00:06] Outros:** Bom dia. Vamos começar pelo \*orçamento\*. Alguém tem dúvidas?
+
+**[00:00:09] Você:** Você: eu tenho.

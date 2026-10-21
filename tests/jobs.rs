@@ -1,5 +1,5 @@
 //! Integração da fila: store e worker reais, com pipelines de teste que travam, falham ou
-//! entram em pânico.
+//! entram em pânico, e as gravações (a pasta das trilhas sai junto com o job).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -8,10 +8,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use scriba::capture::{End, Recording, Track, storage};
 use scriba::clock::LocalTime;
 use scriba::jobs::{
-    Audio, AudioError, Ctx, DIALOG_ERROR, Failure, Job, JobId, Jobs, Media, Outputs, PANIC_MESSAGE,
-    Pipeline, Probe, RemoveError, RetryError, State, part_path,
+    Audio, AudioError, Ctx, DIALOG_ERROR, Estimate, Failure, Job, JobId, Jobs, Media, Outputs,
+    PANIC_MESSAGE, Pipeline, Probe, RECORDING_PREFIX, RemoveError, RetryError, State, part_path,
 };
 
 /// Comporta-se pelo nome do arquivo: `panico` entra em pânico, `espera` roda até ser
@@ -30,6 +31,14 @@ impl Pipeline for TestPipeline {
 
     fn backend(&self) -> Option<String> {
         None
+    }
+
+    /// 1 s por segundo de áudio.
+    fn estimate(&self, duration_ms: u64) -> Option<Estimate> {
+        Some(Estimate {
+            secs: duration_ms / 1_000,
+            gpu: false,
+        })
     }
 
     fn run(&self, job: &Job, ctx: &Ctx) -> Result<Outputs, Failure> {
@@ -574,4 +583,167 @@ fn encerrar_cancela_a_gravacao_e_apaga_os_envios() {
         0,
         "uploads/ vazia"
     );
+}
+
+/// Uma gravação terminada em `root`, como o `Recorder` deixa: as duas trilhas com 1 s e o
+/// `gravacao.json` parado.
+fn recording(root: &Path) -> Recording {
+    let id = JobId::generate();
+    let dir = storage::create(root, id).unwrap();
+    storage::write_manifest(
+        &dir,
+        &storage::Manifest {
+            version: storage::MANIFEST_VERSION,
+            id: id.to_string(),
+            created: LocalTime::now(),
+            mic: "Microfone".into(),
+            output: "Alto-falantes".into(),
+            state: storage::RecState::Parada,
+        },
+    )
+    .unwrap();
+    for track in Track::ALL {
+        let mut w = hound::WavWriter::create(dir.join(track.file()), storage::wav_spec()).unwrap();
+        for i in 0..32_000 {
+            w.write_sample((i % 100) as i16).unwrap();
+        }
+        w.finalize().unwrap();
+    }
+    storage::load(&dir, End::User).unwrap()
+}
+
+/// Põe a gravação na fila com outro nome (os ganchos do `TestPipeline` vêm do nome).
+fn submit_recording(jobs: &Jobs, rec: Recording, name: &str) -> Job {
+    let job = Job {
+        name: name.into(),
+        ..Job::recording(rec, None)
+    };
+    jobs.submit(job.clone());
+    job
+}
+
+fn transcribed(dir: &Path) -> bool {
+    storage::read_manifest(dir).is_some_and(|m| m.state == storage::RecState::Transcrita)
+}
+
+/// Descartar, guardar e remover uma gravação apagam a pasta dela inteira; concluir a marca
+/// como transcrita.
+#[test]
+fn respostas_da_gravacao_apagam_a_pasta() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("gravacoes");
+    let (jobs, worker, _) = start(dir.path());
+
+    let ids: Vec<JobId> = (0..3)
+        .map(|_| jobs.submit_recording(recording(&root)))
+        .collect();
+    let finished: Vec<Job> = ids
+        .iter()
+        .map(|&id| wait_for(&jobs, id, "gravação concluída", done))
+        .collect();
+    for job in &finished {
+        assert_eq!(job.media, Media::Recording);
+        assert!(job.name.starts_with(RECORDING_PREFIX), "{}", job.name);
+        assert!(job.input.is_dir() && transcribed(&job.input), "{job:?}");
+    }
+
+    jobs.discard_audio(finished[0].id).unwrap();
+    assert!(!finished[0].input.exists(), "descartar apaga a pasta");
+
+    let dest = dir.path().join("gravacao.m4a");
+    let chosen = dest.clone();
+    jobs.save_audio(finished[1].id, move |_, _| Ok(Some(chosen)))
+        .unwrap();
+    wait_audio(&jobs, finished[1].id, "guardado", Audio::answered);
+    assert!(dest.exists());
+    assert!(!finished[1].input.exists(), "guardar apaga a pasta");
+
+    jobs.remove(finished[2].id, true).unwrap();
+    assert!(!finished[2].input.exists(), "remover apaga a pasta");
+    assert!(worker.shutdown(Duration::from_secs(5)));
+}
+
+/// Cancelar a transcrição de uma gravação descarta as trilhas, na fila ou rodando.
+#[test]
+fn cancelar_a_gravacao_apaga_as_trilhas() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("gravacoes");
+    let (jobs, worker, _) = start(dir.path());
+    let active = submit_recording(&jobs, recording(&root), "Gravação espera");
+    wait_for(&jobs, active.id, "rodando", running);
+    let queued = submit_recording(&jobs, recording(&root), "Gravação na fila");
+
+    assert_eq!(jobs.cancel(queued.id).unwrap().state, State::Canceled);
+    assert!(!queued.input.exists(), "na fila");
+    jobs.cancel(active.id).unwrap();
+    wait_for(&jobs, active.id, "cancelada", |s| *s == State::Canceled);
+    assert!(!active.input.exists(), "rodando");
+    assert!(worker.shutdown(Duration::from_secs(5)));
+}
+
+/// Fechar o app apaga só a gravação já transcrita que esperava a resposta; a que estava na
+/// fila, rodando (cancelada pelo encerramento) ou que falhou volta na próxima abertura.
+#[test]
+fn encerrar_guarda_as_gravacoes_nao_transcritas() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("gravacoes");
+    let (jobs, worker, _) = start(dir.path());
+    let pending = jobs.submit_recording(recording(&root));
+    let pending = wait_for(&jobs, pending, "concluída", done);
+    let failed = submit_recording(&jobs, recording(&root), "Gravação panico");
+    wait_for(&jobs, failed.id, "falhou", |s| {
+        matches!(s, State::Failed { .. })
+    });
+    let active = submit_recording(&jobs, recording(&root), "Gravação espera");
+    wait_for(&jobs, active.id, "rodando", running);
+    let queued = submit_recording(&jobs, recording(&root), "Gravação na fila");
+
+    assert!(worker.shutdown(Duration::from_secs(5)));
+    assert_eq!(jobs.get(active.id).unwrap().state, State::Canceled);
+    assert!(!pending.input.exists(), "transcrita e sem resposta");
+    for job in [&failed, &active, &queued] {
+        assert!(job.input.is_dir(), "{}", job.name);
+    }
+    let mut back: Vec<JobId> = scriba::capture::recover(&root)
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    back.sort();
+    let mut expected = vec![failed.id, active.id, queued.id];
+    expected.sort();
+    assert_eq!(back, expected);
+}
+
+/// Ao abrir o app, as gravações não transcritas voltam à fila e concluem; a já transcrita
+/// (o app caiu antes da resposta) é apagada.
+#[test]
+fn gravacoes_retomadas_ao_abrir() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("gravacoes");
+    let (old, new) = (recording(&root), recording(&root));
+    let gone = recording(&root);
+    storage::mark_transcribed(&gone.dir).unwrap();
+
+    let (jobs, worker, _) = start(dir.path());
+    assert_eq!(scriba::app::resume_recordings(&jobs, &root), 2);
+    assert!(!gone.dir.exists());
+    let order: Vec<JobId> = jobs.list().iter().rev().map(|j| j.id).collect();
+    assert_eq!(order, [old.id, new.id], "da mais antiga para a mais nova");
+    for rec in [&old, &new] {
+        let job = wait_for(&jobs, rec.id, "retomada", done);
+        assert_eq!(job.media, Media::Recording);
+        assert_eq!((job.size, job.duration_ms), (rec.size, 1_000));
+        // O `TestPipeline` estima 1 s por segundo; a gravação, o dobro.
+        assert_eq!(
+            job.estimate,
+            Some(Estimate {
+                secs: 2,
+                gpu: false
+            })
+        );
+        assert_eq!(job.input, rec.dir);
+    }
+    assert!(worker.shutdown(Duration::from_secs(5)));
+    assert!(!old.dir.exists() && !new.dir.exists());
+    assert_eq!(scriba::app::resume_recordings(&jobs, &root), 0);
 }
