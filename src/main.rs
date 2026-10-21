@@ -63,11 +63,6 @@ fn main() -> ExitCode {
         #[cfg(feature = "test-support")]
         fake_audio: cli.fake_audio,
     };
-    match app::run(opts) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("erro: {e:#}");
-            ExitCode::FAILURE
-        }
-    }
+    // O app registra os próprios erros (no `scriba.log`).
+    app::run(opts)
 }

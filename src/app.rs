@@ -2,6 +2,7 @@
 
 use std::io::Write;
 use std::path::Path;
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -12,6 +13,7 @@ use crate::dialog::{SaveDialog, SystemDialog};
 use crate::engine::Engine;
 use crate::instance::Instance;
 use crate::jobs::{Jobs, Pipeline};
+use crate::logs;
 use crate::opener::{Opener, SystemOpener};
 use crate::web::{self, AppState, Desktop, SHUTDOWN_GRACE};
 
@@ -28,25 +30,60 @@ pub struct Options {
 }
 
 /// Sobe o servidor e bloqueia até Ctrl+C. Se outra instância já responde, só reabre o
-/// navegador nela.
-pub fn run(opts: Options) -> anyhow::Result<()> {
-    let file = opts.paths.instance_file();
-    std::fs::create_dir_all(&opts.paths.data_dir)
-        .with_context(|| format!("criando {}", opts.paths.data_dir.display()))?;
-
-    if let Some(existing) = Instance::read(&file).filter(Instance::is_alive) {
+/// navegador nela. Na instância que serve, o stdout e o stderr vão também para o
+/// `scriba.log`; um erro é registrado lá (e, sem ninguém vendo o stderr, mostrado numa
+/// janela) antes de voltar.
+pub fn run(opts: Options) -> ExitCode {
+    if let Some(existing) = Instance::read(&opts.paths.instance_file()).filter(Instance::is_alive) {
         announce(
             "Scriba já está aberto em",
             &existing.url(),
             opts.open_browser,
         );
-        return Ok(());
+        return ExitCode::SUCCESS;
     }
+    let visible = logs::stderr_visible();
+    let logs_dir = opts.paths.logs_dir();
+    let logs = logs::init(&logs_dir)
+        .inspect_err(|e| eprintln!("não consegui abrir o log em {}: {e}", logs_dir.display()))
+        .ok();
+    let result = serve(opts);
+    if let Err(e) = &result {
+        eprintln!("erro: {e:#}");
+    }
+    drop(logs);
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            if !visible {
+                fatal_dialog(&format!(
+                    "Não consegui abrir o Scriba: {e:#}\n\nDetalhes em {}.",
+                    logs_dir.display()
+                ));
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn serve(opts: Options) -> anyhow::Result<()> {
+    let file = opts.paths.instance_file();
+    std::fs::create_dir_all(&opts.paths.data_dir)
+        .with_context(|| format!("criando {}", opts.paths.data_dir.display()))?;
 
     let listener = web::bind(opts.port).context("abrindo a porta local")?;
     // Só depois de confirmar que esta é a única instância: a fila esvazia `uploads/`.
     let (jobs, worker) = Jobs::start(opts.paths.uploads_dir(), pipeline(&opts))
         .context("preparando a pasta de uploads")?;
+    eprintln!(
+        "Scriba {} · {} · dados em {} · saídas em {} · {}",
+        env!("CARGO_PKG_VERSION"),
+        logs::windows_version(),
+        opts.paths.data_dir.display(),
+        opts.paths.output_dir.display(),
+        jobs.backend()
+            .unwrap_or_else(|| "sem modelo de transcrição".into())
+    );
     resume_recordings(&jobs, &opts.paths.recordings_dir());
     let recorder = Recorder::new(
         audio_source(&opts),
@@ -105,7 +142,25 @@ pub fn run(opts: Options) -> anyhow::Result<()> {
         eprintln!("o job em andamento não parou a tempo; encerrando mesmo assim");
     }
     instance.remove(&file);
+    eprintln!("Scriba encerrado");
     result.context("servidor")
+}
+
+/// A janela do erro que impediu o app de abrir, quando ninguém vê o stderr (o exe aberto
+/// pelo Explorer).
+fn fatal_dialog(text: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let (text, title) = (wide(text), wide("Scriba"));
+    // SAFETY: as duas strings terminam em zero e vivem durante a chamada.
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONERROR,
+        )
+    };
 }
 
 /// As gravações que a execução anterior não transcreveu (Ctrl+C, crash) voltam à fila, da

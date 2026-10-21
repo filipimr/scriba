@@ -11,6 +11,7 @@ pub mod dialog;
 pub mod engine;
 pub mod instance;
 pub mod jobs;
+pub mod logs;
 pub mod media;
 pub mod opener;
 pub mod self_test;
