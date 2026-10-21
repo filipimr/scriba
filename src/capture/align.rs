@@ -9,8 +9,9 @@ pub const RATE: u32 = 32_000;
 /// Acima disso, a diferença para o relógio vira silêncio (ou descarte) na hora: um buraco de
 /// verdade (um pacote perdido já tem ~10 ms). Abaixo, a correção é aos poucos.
 pub const GAP_MS: u64 = 8;
-/// Uma lacuna maior que isso não é um pacote perdido: o computador dormiu (ou o dispositivo
-/// devolveu um timestamp absurdo ao acordar). A gravação termina em vez de virar silêncio.
+/// Uma lacuna maior que isso não é um pacote perdido: o computador dormiu. Com o loopback
+/// mantido pelo silêncio na saída, um intervalo da reunião não chega nem perto (os pacotes
+/// seguem chegando, só que silenciosos). O tempo suspenso sai das duas trilhas.
 pub const SUSPEND_MS: u64 = 30_000;
 /// Abaixo disso, nenhuma correção: o jitter dos timestamps não mexe no áudio.
 pub const DEADBAND_MS: u64 = 2;
@@ -97,21 +98,43 @@ pub enum Action {
 #[derive(Clone, Copy, Debug)]
 pub struct Aligner {
     t0_ns: u64,
+    /// O tempo em que o computador ficou suspenso: sai das duas trilhas.
+    skipped_ns: u64,
 }
 
 impl Aligner {
     /// `t0_ns` é o instante do Gravar: a posição 0 das duas trilhas.
     pub fn new(t0_ns: u64) -> Self {
-        Self { t0_ns }
+        Self {
+            t0_ns,
+            skipped_ns: 0,
+        }
     }
 
     pub fn t0_ns(&self) -> u64 {
         self.t0_ns
     }
 
+    /// Tira `ns` do relógio das duas trilhas (uma suspensão do computador).
+    pub fn skip(&mut self, ns: u64) {
+        self.skipped_ns += ns;
+    }
+
+    pub fn skipped_ns(&self) -> u64 {
+        self.skipped_ns
+    }
+
     /// Onde a amostra capturada em `t_ns` deve ficar, em frames a `RATE`.
     pub fn expected(&self, t_ns: u64) -> i128 {
-        frames_at(i128::from(t_ns) - i128::from(self.t0_ns), RATE)
+        frames_at(
+            i128::from(t_ns) - i128::from(self.t0_ns) - i128::from(self.skipped_ns),
+            RATE,
+        )
+    }
+
+    /// O instante do relógio que cai na posição `frames` (o inverso de [`Aligner::expected`]).
+    pub fn time_of(&self, frames: u64) -> u64 {
+        self.t0_ns + self.skipped_ns + frames * 1_000_000_000 / u64::from(RATE)
     }
 
     /// Quantos frames a trilha deve ter no instante `t_ns` (o fim da gravação).
@@ -198,6 +221,13 @@ mod tests {
         assert_eq!(a.decide(500_000_000, 0), Action::Drop(16_000));
         assert_eq!(a.end(500_000_000), 0);
         assert_eq!(a.end(3_000_000_000), 64_000);
+        assert_eq!(a.time_of(32_000), 2_000_000_000);
+        // 10 s suspenso: saem do relógio.
+        let mut b = a;
+        b.skip(10_000_000_000);
+        assert_eq!(b.expected(13_000_000_000), 64_000);
+        assert_eq!(b.time_of(64_000), 13_000_000_000);
+        assert_eq!(b.skipped_ns(), 10_000_000_000);
         assert_eq!(to_rate(32_000, 48_000), 48_000);
         assert_eq!(to_rate(320, 44_100), 441);
     }

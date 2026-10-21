@@ -83,6 +83,8 @@ pub enum Status {
         levels: [f32; 2],
         /// O microfone está mudo há [`SILENT_SECS`].
         mic_silent: bool,
+        /// O computador suspendeu no meio: o tempo suspenso ficou de fora da gravação.
+        suspended: bool,
         mic: String,
         output: String,
     },
@@ -157,6 +159,7 @@ impl Recorder {
                     elapsed_ms: active.shared.elapsed_ms.load(Ordering::Relaxed),
                     levels: active.shared.levels(),
                     mic_silent: active.shared.mic_silent.load(Ordering::Relaxed),
+                    suspended: active.shared.suspended.load(Ordering::Relaxed),
                     mic,
                     output,
                 }

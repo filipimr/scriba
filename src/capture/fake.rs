@@ -52,6 +52,9 @@ pub struct TrackScript {
     pub fail: Option<(u64, EventKind)>,
     /// O `open` falha com este erro.
     pub open_error: Option<Error>,
+    /// A partir do instante dado (ms do relógio), os timestamps pulam `ms` para a frente,
+    /// como o relógio de um dispositivo que voltou errado de uma suspensão.
+    pub clock_jump: Option<(u64, u64)>,
 }
 
 impl TrackScript {
@@ -68,6 +71,7 @@ impl TrackScript {
             ppm: 0,
             fail: None,
             open_error: None,
+            clock_jump: None,
         }
     }
 }
@@ -340,7 +344,11 @@ fn deliver(
                 buf.extend(std::iter::repeat_n(value, usize::from(t.channels)));
             }
             let ts_jitter = (rng.signed() * f64::from(t.timestamp_jitter_us) * 1_000.0) as i64;
-            let t_ns = (t_first as i64 + ts_jitter).max(0) as u64;
+            let jump = match t.clock_jump {
+                Some((at_ms, ms)) if t_first >= at_ms * 1_000_000 => ms * 1_000_000,
+                _ => 0,
+            };
+            let t_ns = (t_first as i64 + ts_jitter).max(0) as u64 + jump;
             producer.push(t_ns, frames as u32, buf.iter().copied());
         }
         produced += frames;

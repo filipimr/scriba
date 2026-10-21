@@ -42,6 +42,8 @@ pub struct Shared {
     levels: [AtomicU32; 2],
     pub elapsed_ms: AtomicU64,
     pub mic_silent: AtomicBool,
+    /// O computador já suspendeu durante esta gravação (o tempo suspenso ficou de fora).
+    pub suspended: AtomicBool,
     pub xruns: AtomicU64,
     /// Os nomes dos dispositivos (mudam quando um stream é reaberto em outro).
     names: Mutex<[String; 2]>,
@@ -93,27 +95,20 @@ struct TrackWriter {
     lost_before: u64,
     /// O instante do 1º pacote.
     first_ns: Option<u64>,
+    /// Quanto o relógio desta trilha está à frente do de verdade (um timestamp no futuro
+    /// depois de uma suspensão); sai de cada pacote.
+    offset_ns: i128,
 }
 
-/// Um erro de escrita: o disco (o motivo provável) ou o reamostrador; ou uma lacuna que não
-/// é perda de pacote, mas o computador que dormiu.
+/// Um erro de escrita: o disco (o motivo provável) ou o reamostrador.
 enum WriteError {
     Disk(io::Error),
     Resample(String),
-    Suspended(u64),
 }
 
 impl WriteError {
     fn end(&self, track: Track) -> End {
         match self {
-            Self::Suspended(frames) => {
-                eprintln!(
-                    "gravação: {} sem pacotes por {:.0} s: suspensão",
-                    track.file(),
-                    *frames as f64 / f64::from(RATE)
-                );
-                End::Suspended
-            }
             Self::Disk(e) => {
                 eprintln!("gravação: não consegui gravar {}: {e}", track.file());
                 End::Disk
@@ -152,6 +147,7 @@ impl TrackWriter {
             loud_at_ns: t0_ns,
             lost_before: 0,
             first_ns: None,
+            offset_ns: 0,
         })
     }
 
@@ -160,18 +156,44 @@ impl TrackWriter {
     }
 
     /// Escreve tudo o que está no ring.
-    fn drain(&mut self, aligner: &Aligner) -> Result<(), WriteError> {
+    ///
+    /// Uma lacuna maior que [`align::SUSPEND_MS`] é o computador que dormiu: o tempo
+    /// suspenso sai das duas trilhas juntas (o `Aligner` é um só) e a gravação segue. Um
+    /// timestamp no futuro não é confiável (um dispositivo voltou da suspensão com o relógio
+    /// errado): só esta trilha é reancorada, onde está.
+    fn drain(&mut self, aligner: &mut Aligner, now_ns: u64) -> Result<(), WriteError> {
         let rate = self.consumer.format.rate;
         let channels = self.consumer.format.channels;
-        while let Some(packet) = self.consumer.pop(&mut self.raw) {
+        let suspend = align::frames_in_ms(align::SUSPEND_MS);
+        while let Some(mut packet) = self.consumer.pop(&mut self.raw) {
             align::downmix(&self.raw, channels, &mut self.mono);
             self.stats.received += self.mono.len() as u64;
             let position = self.written + self.resampler.pending();
+            let adjusted = i128::from(packet.t_ns) - self.offset_ns;
+            if adjusted > i128::from(now_ns) + 1_000_000_000 {
+                let wanted = aligner.time_of(position);
+                self.offset_ns += adjusted - i128::from(wanted);
+                self.stats.rebases += 1;
+                eprintln!(
+                    "gravação: {} com timestamp {:.0} s no futuro; reancorada",
+                    self.track.file(),
+                    (adjusted - i128::from(now_ns)) as f64 / 1e9
+                );
+            }
+            packet.t_ns = (i128::from(packet.t_ns) - self.offset_ns).max(0) as u64;
+            let gap = aligner.expected(packet.t_ns) - i128::from(position);
+            if gap > i128::from(suspend) {
+                let ns = gap as u64 * 1_000_000_000 / u64::from(RATE);
+                aligner.skip(ns);
+                self.stats.suspended += gap as u64;
+                eprintln!(
+                    "gravação: suspensão de {:.0} s em {:.1} s; o tempo suspenso sai das duas trilhas",
+                    ns as f64 / 1e9,
+                    position as f64 / f64::from(RATE)
+                );
+            }
             let mut skip = 0;
             match aligner.decide(packet.t_ns, position) {
-                Action::Silence(frames) if frames > align::frames_in_ms(align::SUSPEND_MS) => {
-                    return Err(WriteError::Suspended(frames));
-                }
                 Action::Silence(frames) => {
                     if self.stats.received == self.mono.len() as u64 {
                         self.stats.startup += frames;
@@ -286,8 +308,15 @@ impl TrackWriter {
 
     /// O stream foi reaberto: o que restou do antigo é escrito e o reamostrador passa à taxa
     /// do novo.
-    fn swap(&mut self, consumer: Consumer, aligner: &Aligner) -> Result<(), WriteError> {
-        self.drain(aligner)?;
+    fn swap(
+        &mut self,
+        consumer: Consumer,
+        aligner: &mut Aligner,
+        now_ns: u64,
+    ) -> Result<(), WriteError> {
+        self.drain(aligner, now_ns)?;
+        // O stream novo traz o relógio certo.
+        self.offset_ns = 0;
         self.out.clear();
         self.resampler
             .flush(&mut self.out)
@@ -360,8 +389,6 @@ pub struct Session {
     reopens: Vec<(Track, u64)>,
     last_flush_ns: u64,
     last_disk_ns: u64,
-    /// O relógio na última passada, para notar a suspensão.
-    last_cycle_ns: u64,
 }
 
 /// Mantém o Windows acordado enquanto existe (`SetThreadExecutionState` vale por thread).
@@ -412,7 +439,6 @@ impl Session {
             TrackWriter::new(track, consumer, wav, start.t0_ns).map_err(|e| match e {
                 WriteError::Disk(e) => e,
                 WriteError::Resample(e) => io::Error::other(e),
-                WriteError::Suspended(_) => io::Error::other("suspensão"),
             })
         };
         let tracks = [
@@ -439,13 +465,12 @@ impl Session {
             reopens: Vec::new(),
             last_flush_ns: start.t0_ns,
             last_disk_ns: start.t0_ns,
-            last_cycle_ns: start.t0_ns,
         })
     }
 
     /// Grava até o Parar, o encerramento ou um fim automático, e fecha os arquivos. Enquanto
-    /// grava, pede ao Windows para não suspender por inatividade (fechar a tampa ainda
-    /// suspende; aí a gravação termina com o que já tinha).
+    /// grava, pede ao Windows para não suspender por inatividade; se ele suspender mesmo
+    /// assim (tampa fechada), a gravação segue ao acordar, sem o tempo suspenso.
     pub fn run(mut self) -> Recording {
         let _awake = KeepAwake::new();
         let end = loop {
@@ -462,24 +487,22 @@ impl Session {
     }
 
     fn cycle(&mut self) -> Result<(), End> {
-        // A própria thread ficou parada muito tempo: o computador dormiu.
         let woke = self.source.now_ns();
-        if woke.saturating_sub(self.last_cycle_ns) > align::SUSPEND_MS * 1_000_000 {
-            eprintln!(
-                "gravação: o relógio pulou {:.0} s entre duas passadas: suspensão",
-                (woke - self.last_cycle_ns) as f64 / 1e9
-            );
-            return Err(End::Suspended);
-        }
-        self.last_cycle_ns = woke;
         for t in &mut self.tracks {
-            t.drain(&self.aligner).map_err(|e| e.end(t.track))?;
+            t.drain(&mut self.aligner, woke)
+                .map_err(|e| e.end(t.track))?;
         }
         while let Ok(event) = self.events.try_recv() {
             self.handle(event)?;
         }
         let now = self.source.now_ns();
-        let elapsed_ns = now.saturating_sub(self.aligner.t0_ns());
+        // O tempo gravado: sem as suspensões.
+        let elapsed_ns = now
+            .saturating_sub(self.aligner.t0_ns())
+            .saturating_sub(self.aligner.skipped_ns());
+        self.shared
+            .suspended
+            .store(self.aligner.skipped_ns() > 0, Ordering::Relaxed);
         self.shared
             .elapsed_ms
             .store(elapsed_ns / 1_000_000, Ordering::Relaxed);
@@ -557,7 +580,7 @@ impl Session {
             opened.name
         );
         self.tracks[i]
-            .swap(opened.consumer, &self.aligner)
+            .swap(opened.consumer, &mut self.aligner, now)
             .map_err(|e| {
                 e.end(track);
             })?;
@@ -572,7 +595,10 @@ impl Session {
         self.streams = [None, None];
         let now = self.source.now_ns();
         for t in &mut self.tracks {
-            if let Err(e) = t.drain(&self.aligner).and_then(|()| t.flush_resampler()) {
+            if let Err(e) = t
+                .drain(&mut self.aligner, now)
+                .and_then(|()| t.flush_resampler())
+            {
                 e.end(t.track);
             }
         }
@@ -583,8 +609,8 @@ impl Session {
             .max()
             .unwrap_or(0)
             .max(
-                // Um disco cheio ou uma suspensão não devem crescer as trilhas com silêncio.
-                if matches!(end, End::Disk | End::Suspended) {
+                // Um disco cheio não deve crescer as trilhas com silêncio.
+                if end == End::Disk {
                     0
                 } else {
                     self.aligner.end(now)

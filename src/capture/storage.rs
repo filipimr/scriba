@@ -58,9 +58,6 @@ pub enum End {
     Disk,
     /// O teto de duração.
     Limit,
-    /// O computador entrou em suspensão (o relógio pulou ou os pacotes sumiram por muito
-    /// tempo): o que veio antes vale, sem horas de silêncio no lugar.
-    Suspended,
     /// Erro inesperado na thread de escrita.
     Failed,
     /// Achada ao abrir o app.
@@ -78,9 +75,6 @@ impl End {
             }
             Self::Disk => "O disco está quase cheio. A gravação parou e vai ser transcrita.",
             Self::Limit => "A gravação chegou ao limite de 12 h e parou.",
-            Self::Suspended => {
-                "O computador entrou em suspensão. A gravação parou e vai ser transcrita."
-            }
             Self::Failed => "A gravação parou por um erro. O que foi gravado vai ser transcrito.",
         })
     }
@@ -110,6 +104,10 @@ pub struct TrackStats {
     /// Pacotes descartados por falta de espaço no ring.
     pub lost: u64,
     pub reopens: u32,
+    /// Frames a 32 kHz de suspensão do computador que saíram da trilha.
+    pub suspended: u64,
+    /// Vezes que um timestamp no futuro fez a trilha ser reancorada.
+    pub rebases: u32,
 }
 
 /// Uma gravação terminada, pronta para virar job.

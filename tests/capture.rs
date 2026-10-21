@@ -214,26 +214,85 @@ fn microfone_perdido_finaliza_os_arquivos() {
     assert_eq!(rec.stop(), Err(Error::NotRecording));
 }
 
-/// O computador dormiu: 60 s sem pacotes nas duas trilhas. A gravação termina com o que
-/// tinha, sem um minuto de silêncio no fim (na noite do teste de 1 h, a suspensão virava
-/// horas de silêncio).
+/// O computador dormiu no intervalo da reunião: 60 s sem pacotes nas duas trilhas. Ao
+/// acordar, a gravação segue, sem o minuto suspenso (na 1ª noite do teste de 1 h, cada
+/// suspensão virava horas de silêncio) e com as trilhas ainda alinhadas.
 #[test]
-fn suspensao_termina_a_gravacao_sem_silencio_enorme() {
-    let source = Arc::new(FakeSource::with_speed(Script::tones(), 20.0));
+fn suspensao_some_da_gravacao_e_ela_segue() {
+    let mut script = Script::tones();
+    script.mic = TrackScript::new("Microfone", 44_100, 1, impulses());
+    script.system = TrackScript::new("Saída", 48_000, 2, impulses());
+    let source = Arc::new(FakeSource::with_speed(script, 20.0));
     let t = now_ms(&source);
     source.edit(|s| {
         let sleep = t + 3_000..t + 63_000;
         s.mic.gaps = vec![sleep.clone()];
         s.system.gaps = vec![sleep];
     });
-    let (rec, _dir, done) = recorder(source, Limits::default());
+    let (rec, _dir, _done) = recorder(source, Limits::default());
     rec.start(&Choice::default()).unwrap();
-    assert!(wait(60, || idle(&rec)));
-    let r = done.lock().unwrap()[0].clone();
-    assert_eq!(r.end, End::Suspended);
-    assert!(r.end.message().unwrap().contains("suspensão"));
-    let secs = wav(&r.dir, Track::Mic).len() as f64 / f64::from(RATE);
-    assert!(secs < 5.0, "{secs} s");
+    // Depois de acordar, o decorrido conta só o tempo gravado. (Aqui o processo segue
+    // rodando durante a "suspensão"; num computador suspenso, a thread nem roda.)
+    let suspended = || {
+        matches!(
+            rec.status(),
+            Status::Recording {
+                suspended: true,
+                ..
+            }
+        )
+    };
+    assert!(wait(60, suspended));
+    assert!(wait(60, || elapsed(&rec) >= 8_000));
+    let r = rec.stop().unwrap();
+    assert_eq!(r.end, End::User);
+    let (mic, sys) = (wav(&r.dir, Track::Mic), wav(&r.dir, Track::System));
+    let secs = mic.len() as f64 / f64::from(RATE);
+    assert!((8.0..12.0).contains(&secs), "{secs} s");
+    let suspended = r.stats.iter().map(|s| s.suspended).max().unwrap();
+    assert!(suspended >= 55 * u64::from(RATE), "{:?}", r.stats);
+    // Depois de acordar, os picos das duas trilhas continuam casados.
+    let until = mic.len() - RATE as usize;
+    let (pm, ps) = (peaks(&mic[..until], 0.2), peaks(&sys[..until], 0.2));
+    assert!(pm.len() >= 6, "{} picos", pm.len());
+    for p in &ps {
+        let nearest = pm.iter().map(|m| m.abs_diff(*p)).min().unwrap();
+        assert!(
+            nearest <= TEN_MS,
+            "pico da saída em {p}: {nearest} amostras"
+        );
+    }
+}
+
+/// Um dispositivo volta de uma suspensão com o relógio 1 h à frente: só a trilha dele é
+/// reancorada, e a outra não perde nada.
+#[test]
+fn timestamp_no_futuro_reancora_so_a_trilha() {
+    let mut script = Script::tones();
+    script.mic = TrackScript::new("Microfone", 48_000, 1, impulses());
+    script.system = TrackScript::new("Saída", 48_000, 2, impulses());
+    let source = Arc::new(FakeSource::with_speed(script, SPEED));
+    let t = now_ms(&source);
+    source.edit(|s| s.mic.clock_jump = Some((t + 3_000, 3_600_000)));
+    let (rec, _dir, _done) = recorder(source, Limits::default());
+    rec.start(&Choice::default()).unwrap();
+    assert!(wait(60, || elapsed(&rec) >= 8_000));
+    let r = rec.stop().unwrap();
+    assert_eq!(r.stats[Track::Mic.index()].rebases, 1, "{:?}", r.stats);
+    assert_eq!(r.stats[Track::System.index()].rebases, 0);
+    let (mic, sys) = (wav(&r.dir, Track::Mic), wav(&r.dir, Track::System));
+    let secs = mic.len() as f64 / f64::from(RATE);
+    assert!(secs < 12.0, "{secs} s: a hora do salto virou silêncio");
+    let until = mic.len() - RATE as usize;
+    let (pm, ps) = (peaks(&mic[..until], 0.2), peaks(&sys[..until], 0.2));
+    assert!(ps.len() >= 6 && pm.len() >= 6);
+    for p in &ps {
+        let nearest = pm.iter().map(|m| m.abs_diff(*p)).min().unwrap();
+        assert!(
+            nearest <= TEN_MS,
+            "pico da saída em {p}: {nearest} amostras"
+        );
+    }
 }
 
 #[test]
