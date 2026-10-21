@@ -1,0 +1,23 @@
+---
+source: src/web/record.rs
+expression: html
+---
+<section id="gravar" class="record-panel max-md:p-md is-recording" aria-labelledby="record-title">
+  <h2 id="record-title" class="sr-only">Gravar</h2>
+  <button id="botao-gravar" class="record-button record-button-recording" type="button" aria-label="Parar" title="Parar (Ctrl+Shift+R)"
+    hx-post="/api/record/stop?painel=1" hx-swap="none" hx-disabled-elt="this" data-gravar></button>
+  <span class="record-label">Parar</span>
+  <span id="gravar-tempo" class="record-timer" data-tempo>00:12:34</span>
+  <div class="level-meters">
+    <label class="level-meter"><span>Você</span><meter min="0" max="1" value="0.67" data-nivel="0"></meter></label>
+    <label class="level-meter"><span>Outros</span><meter min="0" max="1" value="0.33" data-nivel="1"></meter></label>
+  </div>
+  <div id="gravar-avisos" class="record-alerts">
+<span class="status-badge status-badge-warning">Microfone sem sinal</span>
+  </div>
+  <details id="ajustes" class="record-settings" hx-get="/api/record/devices" hx-trigger="toggle" hx-target="#ajustes-lista">
+    <summary>Ajustes</summary>
+    <div id="ajustes-lista"></div>
+  </details>
+  <p class="record-hint">Use fone de ouvido para não duplicar falas.</p>
+</section>

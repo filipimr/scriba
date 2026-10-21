@@ -1,0 +1,15 @@
+---
+source: src/web/record.rs
+expression: bar
+---
+
+<div id="barra-gravacao" class="recording-bar" data-gravando
+  hx-get="/api/record/status?id=01JAZ5Y3V8K9M2N4P6Q7R8S9T0&amp;painel=1" hx-trigger="every 1s" hx-swap="outerHTML">
+  <div class="recording-bar-state">
+    <span class="recording-dot" aria-hidden="true"></span>
+    <span>Gravando</span>
+    <span class="recording-bar-timer" data-tempo>00:12:34</span>
+  </div>
+  <button id="barra-parar" class="btn btn-primary" type="button" title="Parar (Ctrl+Shift+R)"
+    hx-post="/api/record/stop?painel=1" hx-swap="none" hx-disabled-elt="this" data-parar>Parar</button>
+</div>

@@ -1,0 +1,48 @@
+---
+source: src/web/jobs.rs
+expression: html
+---
+<article id="job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" class="job-card max-md:p-md" hx-get="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0" hx-trigger="every 1s" hx-swap="outerHTML"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-mic"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 19v3" />
+  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+  <rect x="9" y="2" width="6" height="13" rx="3" />
+</svg>
+  <div class="job-card-main">
+    <div class="job-card-head">
+      <h3 class="job-card-name" title="Gravação de 20/10, 14:30">Gravação de 20/10, 14:30</h3>
+      <span class="status-badge">Na fila</span>
+    </div>
+    <p class="job-card-meta">47 min · 312 MB · <span class="job-card-date">20/10/2026 14:30</span></p>
+    <p class="job-card-meta">Cerca de 2 min na GPU</p>
+  </div>
+  <button id="acao-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" class="btn-icon" type="button" aria-label="Cancelar Gravação de 20/10, 14:30" title="Cancelar" hx-post="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/cancel" hx-target="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0" hx-swap="outerHTML" hx-sync="#job-01JAZ5Y3V8K9M2N4P6Q7R8S9T0:replace" hx-confirm="As trilhas gravadas serão apagadas." data-confirmar-titulo="Descartar a gravação?" data-confirmar-acao="Descartar"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-x"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M18 6 6 18" />
+  <path d="m6 6 12 12" />
+</svg></button>
+</article>

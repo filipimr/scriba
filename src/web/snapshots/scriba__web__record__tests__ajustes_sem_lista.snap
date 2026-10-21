@@ -1,0 +1,39 @@
+---
+source: src/web/record.rs
+expression: html
+---
+<form class="record-devices" hx-post="/api/record/devices" hx-trigger="change" hx-target="#ajustes-lista">
+  <fieldset>
+    <legend class="sr-only">Dispositivos da gravação</legend>
+    <div class="record-device">
+      <label for="mic">Microfone</label>
+      <select id="mic" name="mic" class="device-select">
+        <option value="" selected>Padrão do Windows</option>
+      </select>
+    </div>
+    <div class="record-device">
+      <label for="output">Saída do som</label>
+      <select id="output" name="output" class="device-select">
+        <option value="" selected>Padrão do Windows</option>
+      </select>
+    </div>
+  </fieldset>
+  <p class="alert-inline" role="alert"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-circle-alert"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+  <line x1="12" x2="12" y1="8" y2="12" />
+  <line x1="12" x2="12.01" y1="16" y2="16" />
+</svg><span>Não consegui listar os dispositivos de som.</span></p>
+</form>

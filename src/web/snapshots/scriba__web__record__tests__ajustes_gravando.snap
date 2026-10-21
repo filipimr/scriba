@@ -1,0 +1,25 @@
+---
+source: src/web/record.rs
+expression: html
+---
+<form class="record-devices" hx-post="/api/record/devices" hx-trigger="change" hx-target="#ajustes-lista">
+  <fieldset disabled>
+    <legend class="sr-only">Dispositivos da gravação</legend>
+    <div class="record-device">
+      <label for="mic">Microfone</label>
+      <select id="mic" name="mic" class="device-select">
+        <option value="" selected>Padrão do Windows (Microfone (Realtek))</option>
+        <option value="mic">Microfone (Realtek) (padrão)</option>
+        <option value="bt">Fones AirPods</option>
+      </select>
+    </div>
+    <div class="record-device">
+      <label for="output">Saída do som</label>
+      <select id="output" name="output" class="device-select">
+        <option value="" selected>Padrão do Windows (Alto-falantes)</option>
+        <option value="alto">Alto-falantes (padrão)</option>
+      </select>
+    </div>
+  </fieldset>
+  <p class="record-hint">Os dispositivos mudam depois que esta gravação parar.</p>
+</form>
