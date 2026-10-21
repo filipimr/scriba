@@ -49,6 +49,11 @@ tower.workspace = true
 name = "upload"
 required-features = ["test-support"]
 
+# Sobe o exe com `--fake-pipeline`, que provoca o pânico no worker.
+[[test]]
+name = "logs"
+required-features = ["test-support"]
+
 # A gravação com o `FakeSource` (os testes de hardware usam o cpal).
 [[test]]
 name = "capture"
@@ -94,8 +99,9 @@ whisper-rs = { version = "0.16.0", features = ["raw-api"] }
 # (QPC) e o enumerador do dispositivo (Bluetooth), com features que o cpal já compila.
 windows = { version = "0.62.2", features = ["Win32_Devices_Properties", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Media_Audio", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Performance", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
 # Hora local e fuso (GetLocalTime/GetSystemTime), a Lixeira (SHFileOperationW), o espaço livre em
-# disco da gravação; nos testes, o pico de memória do processo.
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell"] }
+# disco da gravação; os logs (handles padrão, pipes, filtro de falhas nativas, versão do Windows
+# no registro) e a janela do erro fatal; nos testes, o pico de memória do processo.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Kernel", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]
 lto = "thin"

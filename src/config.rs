@@ -48,6 +48,11 @@ impl Paths {
     pub fn recordings_dir(&self) -> PathBuf {
         self.data_dir.join("gravacoes")
     }
+
+    /// O `scriba.log` e os antigos, com rotação.
+    pub fn logs_dir(&self) -> PathBuf {
+        self.data_dir.join("logs")
+    }
 }
 
 /// Modo de tema escolhido no header. `System` segue o Windows.
@@ -171,5 +176,6 @@ mod tests {
         assert_eq!(p.output_dir, PathBuf::from("o"));
         assert_eq!(p.instance_file(), PathBuf::from("d").join("instance.json"));
         assert_eq!(p.recordings_dir(), PathBuf::from("d").join("gravacoes"));
+        assert_eq!(p.logs_dir(), PathBuf::from("d").join("logs"));
     }
 }

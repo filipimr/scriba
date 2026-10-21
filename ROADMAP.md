@@ -16,7 +16,7 @@ App local para Windows, distribuído como um único `.exe`, que **grava** (micro
 | 4 | Transcrição de arquivos (MVP) | Concluída |
 | 5 | Guardar áudio | Concluída |
 | 6 | Gravação ao vivo | Concluída |
-| 7 | Robustez, empacotamento e entrega final | Não iniciada |
+| 7 | Robustez, empacotamento e entrega final | Em andamento |
 
 Valores possíveis: Não iniciada, Em andamento, Concluída.
 
@@ -427,10 +427,12 @@ O plano da fase a divide em quatro etapas, cada uma com o próprio PR: 6.1 captu
 
 Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se comporta como um app de bandeja.
 
+O plano da fase a divide em cinco etapas, cada uma com o próprio PR: 7.1 logs e panic hook; 7.2 app de bandeja (subsistema, encerramento único, instância única, `winresource`); 7.3 histórico, `config.json` v1 e limpeza; 7.4 release completa (`vulkan-1.dll` com delay-load, `--self-test`, `cargo xtask dist`, `release.yml`); 7.5 Windows Sandbox e entrega (README, versão 1.0.0).
+
 **Entregas:**
 
 - [ ] `windows_subsystem = "windows"`, ícone na bandeja (Abrir/Sair), ícone e metadados do exe (`winresource`).
-- [ ] Logs com rotação em `%LOCALAPPDATA%\Scriba\logs` e panic hook.
+- [x] Logs com rotação em `%LOCALAPPDATA%\Scriba\logs` e panic hook (etapa 7.1, `src/logs.rs`).
 - [ ] Histórico reconstruído a partir dos `job.json`, `config.json` e limpeza de temporários antigos.
 - [ ] `release.yml` completo: Vulkan SDK no runner, modelo embutido e `--self-test` exercitando também o fallback para CPU (o runner não tem GPU).
 - [ ] `cargo xtask dist` faz o mesmo build localmente.
@@ -629,6 +631,8 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-21 | Fase 6 | Achado do custo: "sem fone" (eco cru, sem o cancelamento que o microfone desta máquina faz), o `small` entra em laço no eco e repete por minutos, em pedaços rotacionados, uma frase que "Outros" disse uma vez; a janela de ±1 s não o alcança, e saíram 1.172 palavras "Você" em vez de ~200. A mescla ganha duas regras só para "Você" longo (≥ 8 palavras): é eco se ≥ 60% das palavras dele estão em ordem num só "Outros" que começou até 10 min antes, ou no texto dos "Você" que começaram até 30 s antes do fim dele (o laço). A janela conta do fim porque, depois de um silêncio, o whisper às vezes põe o começo do segmento no fim do anterior (a fala parecia 45 s mais cedo, e a 1ª versão com 60 s pelo começo tirou falas da Maria). Resultado: CPU "sem fone" 1.172 → 90 palavras "Você"; "com fone" 200 de 200 nos dois backends (o teste afirma ≥ 90%). Resposta curta repetida ("Combinado.") e frase longa repetida 40 s depois ficam | Decisão 17 ampliada; teste unitário `laco_do_whisper_no_eco_sai`. Lacuna: na GPU, "sem fone", sobram ~90 palavras de um laço de frases de 7 palavras, abaixo do mínimo |
 | 2026-10-21 | Fase 6 | Gravação longa e concorrente com o build de release (`tests/capture.rs`): `gravacao_longa` (60 min) sem pacotes perdidos, deriva −11 ppm (microfone) e −2 ppm (sistema), erro máximo 2,09 e 2,75 ms, marcadores a +6,7 ms em 3.595 s, 39,5 ms de silêncio inserido no microfone em 3 vezes, pico de 444 MB no processo do teste (inclui a hora de áudio decodificada para tocar, como na 6.1; aos ~29 min de gravação, o `tasklist` mostrava o processo com 67 MB, então o pico é da decodificação, e o `Recorder` em si fica nos rings de 10 s e nos buffers de escrita); `gravar_enquanto_transcreve_na_cpu` (`SCRIBA_LONG_AUDIO` = `sessao-1h.mp3`) sem pacotes perdidos, erro máximo 1,12 e 1,97 ms, marcadores a −1,5 ms em 177 s | Verificação 3 do plano da fase; confirma a decisão 15 sem reduzir as threads do whisper |
 | 2026-10-21 | Fase 6 | Textos revistos no fechamento: decisão 5 (as trilhas ficam até a resposta a "Guardar o áudio?"; a linha "Captura" das decisões de arquitetura e a entrega "Job de gravação" já dizem isso desde a 6.2) e decisão 9 (sem abas no header: a tela única com o painel e a dropzone, a `recording-bar` em todas as páginas, como no `DESIGN-scriba.md`). Os limiares do alinhamento ficaram mais justos que no plano: lacuna acima de 8 ms (não 20) vira silêncio, e a deriva entre 2 e 8 ms é corrigida | A linha de 2026-10-20 sobre o alinhamento registra os números do plano |
+| 2026-10-21 | Fase 7 | A fase é dividida em cinco etapas, cada uma com o próprio PR: 7.1 logs e panic hook, 7.2 app de bandeja, 7.3 histórico, config e limpeza, 7.4 release completa, 7.5 Sandbox e entrega. Decisões do mantenedor: (1) um exe só, com Vulkan, o large-v3-turbo e o `small` (~840 MB); (2) a mídia sem resposta a "Guardar o áudio?" é descartada depois de 24 h, porque o app de bandeja fica aberto por semanas; (3) o histórico mostra as 50 transcrições mais recentes, lidas dos `job.json`; (4) o Windows Sandbox é habilitado por `scripts/setup.ps1 -Sandbox`. O exe de release importa direto três funções do `vulkan-1.dll` (`dumpbin`), então o delay-load do "Plano B" dos riscos passa a ser necessário (etapa 7.4) | Os logs vêm antes da bandeja: sem console, o log é o único registro. Uma máquina sem driver de GPU (VM, Sandbox) não abriria o exe |
+| 2026-10-21 | Fase 7 | Etapa 7.1, logs (`src/logs.rs`, sem crate novo): `<data-dir>\logs\scriba.log`, girando acima de 5 MB e guardando 4 antigos (até 25 MB), cada linha com data e hora em milissegundos. A captura é nos handles: o stdout e o stderr passam por dois pipes (`SetStdHandle`, e `_open_osfhandle` + `_dup2` nos fd 1 e 2 do CRT estático), e uma thread por pipe grava no arquivo e repete a linha no destino de antes (uma cópia do handle original: o console, em UTF-16, ou o pipe de quem abriu o exe). O panic hook (thread, `Location`, mensagem e backtrace) e o `SetUnhandledExceptionFilter` gravam direto no arquivo. Só a instância que serve liga os logs; ela abre com a versão, a build do Windows (pelo registro: o `ProductName` diz "Windows 10" também no 11), as pastas e o backend. Um erro fatal sem ninguém vendo o stderr vira uma `MessageBoxW` | Os ~65 `eprintln!` não mudam, e o `std::cerr` do ggml-vulkan e o `av_log` do FFmpeg também caem no log; trocar as chamadas por uma macro deixaria o código C de fora. O tee usa uma cópia do handle original porque o `_dup2` do CRT pode fechar o handle que o fd tinha |
 
 ## Referências verificadas
 
