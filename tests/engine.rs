@@ -15,6 +15,10 @@
 //!
 //! `gravacao_real` transcreve as trilhas reais da etapa 6.1 com a "Você" da Maria misturada
 //! no microfone (deixa o `.txt` em `%TEMP%\scriba-gravacao\transcricoes`).
+//!
+//! `custo_da_gravacao` compara uma gravação com um arquivo da mesma duração, com e sem fone
+//! (`SCRIBA_COST_AUDIO`, `SCRIBA_COST_MIN`, `SCRIBA_COST_DEVICES`; os `.txt` ficam em
+//! `%TEMP%\scriba-custo`).
 
 mod common;
 
@@ -475,7 +479,8 @@ fn gravacao_sai_rotulada_e_sem_eco() {
 /// sem nada tocando, a 2ª por cima da Câmara. Roda no backend do app (a GPU dedicada).
 ///
 /// `cargo test --release --features vulkan --test engine -- --ignored --nocapture gravacao_real`
-/// (`SCRIBA_REC_DIR` troca a pasta da gravação).
+/// (`SCRIBA_REC_DIR` troca a pasta da gravação, `SCRIBA_REC_VOCE_AT` o segundo em que a
+/// Maria entra).
 #[test]
 #[ignore = "hardware"]
 fn gravacao_real() {
@@ -503,8 +508,10 @@ fn gravacao_real() {
     manifest.id = id.to_string();
     storage::write_manifest(&dir, &manifest).unwrap();
 
-    // A Maria no microfone real, a partir de 16 s.
-    const AT: usize = 16 * 32_000;
+    // A Maria no microfone real, a partir de 16 s (ou `SCRIBA_REC_VOCE_AT` segundos).
+    let at: usize = std::env::var("SCRIBA_REC_VOCE_AT")
+        .map_or(16, |s| s.parse().expect("SCRIBA_REC_VOCE_AT em segundos"))
+        * 32_000;
     let mic_path = dir.join(Track::Mic.file());
     let mut mic: Vec<i16> = hound::WavReader::open(&mic_path)
         .unwrap()
@@ -516,7 +523,7 @@ fn gravacao_real() {
         .samples::<i16>()
         .map(Result::unwrap)
         .collect();
-    for (m, v) in mic[AT..].iter_mut().zip(&voce) {
+    for (m, v) in mic[at..].iter_mut().zip(&voce) {
         *m = m.saturating_add(*v);
     }
     let mut w = hound::WavWriter::create(&mic_path, storage::wav_spec()).unwrap();
@@ -719,6 +726,174 @@ fn long_audio(var: &str) {
     println!("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
     for row in rows {
         println!("{row}");
+    }
+}
+
+/// O `Engine` de um backend (`gpu` ou `cpu`), como no `long_audio`.
+fn engine_on(device: &str, out: PathBuf) -> Engine {
+    let models = Models::locate();
+    let plans: Vec<Plan> = asr::plans(&asr::devices(), &models)
+        .into_iter()
+        .filter(|p| match device {
+            "gpu" => matches!(p.backend, Backend::Gpu(_)),
+            "cpu" => p.backend == Backend::Cpu,
+            other => panic!("dispositivo desconhecido: {other}"),
+        })
+        .collect();
+    assert!(!plans.is_empty(), "sem candidato para {device}");
+    Engine::with_asr(out, Asr::new(plans, models))
+}
+
+fn write_track(path: &Path, samples: &[i16]) {
+    let mut w = hound::WavWriter::create(path, scriba::capture::storage::wav_spec()).unwrap();
+    for s in samples {
+        w.write_sample(*s).unwrap();
+    }
+    w.finalize().unwrap();
+}
+
+/// Etapa 6.4: quanto a gravação custa a mais que um arquivo da mesma duração. A trilha do
+/// sistema é o áudio de `SCRIBA_COST_AUDIO` (padrão: o trecho da Câmara), cortado em
+/// `SCRIBA_COST_MIN` minutos (padrão 10); o microfone tem a Maria (`voce.wav`) a cada
+/// minuto, "com fone" sozinha e "sem fone" com o sistema a −12 dB e 60 ms depois (o eco que
+/// também é transcrito, o pior caso). O arquivo é a soma das trilhas "sem fone". Em cada
+/// backend de `SCRIBA_COST_DEVICES` (padrão `gpu,cpu`), o modelo é carregado antes e cada
+/// razão tem de caber no fator da estimativa (`RECORDING_COST`).
+///
+/// `cargo test --release --features vulkan --test engine -- --ignored --nocapture custo_da_gravacao`
+#[test]
+#[ignore = "hardware"]
+fn custo_da_gravacao() {
+    const RATE: usize = 32_000;
+    let source = std::env::var("SCRIBA_COST_AUDIO").map_or_else(
+        |_| PathBuf::from(r"C:\dev\audio-camara\trecho.wav"),
+        PathBuf::from,
+    );
+    let minutes: usize = std::env::var("SCRIBA_COST_MIN").map_or(10, |m| m.parse().unwrap());
+    let devices = std::env::var("SCRIBA_COST_DEVICES").unwrap_or_else(|_| "gpu,cpu".into());
+
+    // A fonte em 16 kHz, levada a 32 kHz por interpolação linear.
+    let x = scriba::media::extract_audio(&source, |_| {}, &AtomicBool::new(false)).unwrap();
+    let len = (minutes * 60 * RATE).min(x.len() * 2);
+    let system: Vec<i16> = (0..len)
+        .map(|i| {
+            let a = x[i / 2];
+            let b = x.get(i / 2 + 1).copied().unwrap_or(a);
+            let v = if i % 2 == 0 { a } else { (a + b) / 2.0 };
+            (v.clamp(-1.0, 1.0) * 32_767.0) as i16
+        })
+        .collect();
+    let voce: Vec<i16> = hound::WavReader::open(fixture("voce.wav"))
+        .unwrap()
+        .samples::<i16>()
+        .map(Result::unwrap)
+        .collect();
+    let mut fone = vec![0i16; len];
+    for start in (10 * RATE..len).step_by(60 * RATE) {
+        for (m, v) in fone[start..].iter_mut().zip(&voce) {
+            *m = *v;
+        }
+    }
+    const DELAY: usize = RATE * 60 / 1_000;
+    let mut sem_fone = fone.clone();
+    for (i, m) in sem_fone.iter_mut().enumerate().skip(DELAY) {
+        *m = m.saturating_add(system[i - DELAY] / 4);
+    }
+    let mix: Vec<i16> = system
+        .iter()
+        .zip(&sem_fone)
+        .map(|(a, b)| a.saturating_add(*b))
+        .collect();
+
+    let dir = tempfile::tempdir().unwrap();
+    let tracks = dir.path().join("trilhas");
+    std::fs::create_dir(&tracks).unwrap();
+    let sistema_wav = tracks.join("sistema.wav");
+    let fone_wav = tracks.join("fone.wav");
+    let sem_fone_wav = tracks.join("sem-fone.wav");
+    write_track(&sistema_wav, &system);
+    write_track(&fone_wav, &fone);
+    write_track(&sem_fone_wav, &sem_fone);
+    let duration_ms = (len * 1_000 / RATE) as u64;
+    println!(
+        "{}: {:.1} min",
+        source.display(),
+        duration_ms as f64 / 60_000.0
+    );
+
+    let file_job = |input: &Path| Job {
+        id: JobId::generate(),
+        name: "arquivo.wav".into(),
+        media: Media::Audio,
+        size: 0,
+        duration_ms,
+        created: created(),
+        estimate: None,
+        input: input.into(),
+        state: State::Queued,
+    };
+    let ctx = || Ctx::new(Arc::new(AtomicBool::new(false)), |_, _| {});
+    let mut rows = Vec::new();
+    for device in devices.split(',').map(str::trim) {
+        let engine = engine_on(device, dir.path().join("saidas"));
+        // Carrega o modelo fora da medição.
+        let warm = dir.path().join("aquecer.wav");
+        std::fs::copy(fixture("fala.wav"), &warm).unwrap();
+        engine.run(&file_job(&warm), &ctx()).unwrap();
+
+        let input = dir.path().join(format!("arquivo-{device}.wav"));
+        write_track(&input, &mix);
+        let t0 = Instant::now();
+        engine.run(&file_job(&input), &ctx()).unwrap();
+        let file = t0.elapsed().as_secs_f64();
+        let mut times = Vec::new();
+        for mic in [&fone_wav, &sem_fone_wav] {
+            let rec = recording_from(&dir.path().join("gravacoes"), mic, &sistema_wav);
+            let job = Job::recording(rec, None);
+            let t0 = Instant::now();
+            let outputs = engine.run(&job, &ctx()).unwrap();
+            times.push(t0.elapsed().as_secs_f64());
+            let txt = std::fs::read_to_string(&outputs.txt).unwrap();
+            let keep = std::env::temp_dir().join("scriba-custo").join(format!(
+                "{device}-{}.txt",
+                mic.file_stem().unwrap().to_str().unwrap()
+            ));
+            std::fs::create_dir_all(keep.parent().unwrap()).unwrap();
+            std::fs::write(&keep, &txt).unwrap();
+            let voce = speaker_blocks(&txt, transcript::Speaker::Voce).join(" ");
+            if mic == &fone_wav {
+                // As duas frases da Maria (20 palavras) em cada minuto: nenhuma vira eco.
+                let said = (10 * RATE..len).step_by(60 * RATE).count() * 20;
+                let got = voce.split_whitespace().count();
+                assert!(
+                    got * 10 >= said * 9,
+                    "{device}: {got} de {said} palavras \"Você\""
+                );
+            }
+            println!(
+                "{device}, {}: {} palavras \"Você\"",
+                mic.file_stem().unwrap().to_str().unwrap(),
+                voce.split_whitespace().count()
+            );
+        }
+        let row = format!(
+            "| {device} | {:.1} s | {:.1} s ({:.2}×) | {:.1} s ({:.2}×) |",
+            file,
+            times[0],
+            times[0] / file,
+            times[1],
+            times[1] / file
+        );
+        println!("{row}");
+        rows.push((row, times[1] / file));
+    }
+    println!("\n| Backend | Arquivo | Gravação com fone | Gravação sem fone |");
+    println!("| --- | --- | --- | --- |");
+    for (row, _) in &rows {
+        println!("{row}");
+    }
+    for (row, ratio) in rows {
+        assert!(ratio <= scriba::jobs::RECORDING_COST, "{row}");
     }
 }
 
