@@ -1,5 +1,11 @@
 //! Os jobs em memória, em ordem de criação, e a fila do worker. Até a Fase 7 nada é
-//! persistido: um reinício começa com a lista vazia.
+//! persistido: um reinício começa com a lista vazia (as gravações ainda não transcritas
+//! voltam pelo `capture::recover`).
+//!
+//! A mídia de um job (o envio em `uploads/` ou a pasta da gravação) sai ao cancelar, ao
+//! remover e com a resposta a "Guardar o áudio?". Ao fechar o app, os envios saem todos; a
+//! gravação, só a já transcrita: a que estava na fila, rodando ou que falhou volta na
+//! próxima abertura.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -15,10 +21,11 @@ use tokio::sync::mpsc;
 
 use super::id::JobId;
 use super::model::{
-    Audio, AudioEvent, Event, Failure, Job, Outputs, PANIC_MESSAGE, Probe, Stage, State,
+    Audio, AudioEvent, Event, Failure, Job, Media, Outputs, PANIC_MESSAGE, Probe, Stage, State,
 };
 use super::pipeline::Pipeline;
 use super::worker::Worker;
+use crate::capture::{Recording, storage};
 
 /// Mensagens para o worker.
 pub(super) enum Msg {
@@ -145,6 +152,15 @@ impl Jobs {
         let _ = self.0.queue.send(Msg::Run(id));
     }
 
+    /// Põe uma gravação terminada na fila, com a estimativa do pipeline.
+    pub fn submit_recording(&self, rec: Recording) -> JobId {
+        let estimate = self.0.pipeline.estimate(rec.duration_ms);
+        let job = Job::recording(rec, estimate);
+        let id = job.id;
+        self.submit(job);
+        id
+    }
+
     /// Do mais recente para o mais antigo.
     pub fn list(&self) -> Vec<Job> {
         self.read().values().rev().map(|e| e.job.clone()).collect()
@@ -167,7 +183,7 @@ impl Jobs {
             entry.job.clone()
         };
         if job.state == State::Canceled {
-            remove_quietly(&job.input);
+            discard_input(&job);
         }
         Some(job)
     }
@@ -190,7 +206,7 @@ impl Jobs {
         Ok(job)
     }
 
-    /// Tira um job terminado da lista e apaga o que sobrou dele em `uploads`. Num job
+    /// Tira um job terminado da lista e apaga a mídia que sobrou dele. Num job
     /// concluído, só com `confirmed`: a pasta da saída vai para a Lixeira antes.
     pub fn remove(&self, id: JobId, confirmed: bool) -> Result<(), RemoveError> {
         let job = self.get(id).ok_or(RemoveError::NotFound)?;
@@ -211,7 +227,7 @@ impl Jobs {
             _ => {}
         }
         if let Some(entry) = self.write().remove(&id) {
-            remove_quietly(&entry.job.input);
+            discard_input(&entry.job);
         }
         Ok(())
     }
@@ -240,7 +256,9 @@ impl Jobs {
 
     /// O fim do pipeline. Um job cancelado tem o envio apagado antes de publicar o fim (quem
     /// vê o job terminado já não acha o arquivo); o concluído o guarda até a resposta a
-    /// "Guardar o áudio?", e o que falhou, para o "Tentar de novo".
+    /// "Guardar o áudio?", e o que falhou, para o "Tentar de novo". Uma gravação cancelada
+    /// pelo encerramento (Ctrl+C no meio da transcrição) fica, para voltar na próxima
+    /// abertura; a concluída é marcada como transcrita no `gravacao.json`.
     pub(super) fn finish(&self, id: JobId, event: Event) {
         let mut entries = self.write();
         let Some(entry) = entries.get_mut(&id) else {
@@ -249,8 +267,18 @@ impl Jobs {
         let Ok(state) = entry.job.state.apply(event) else {
             return;
         };
-        if state == State::Canceled {
-            remove_quietly(&entry.job.input);
+        let recording = entry.job.media == Media::Recording;
+        match &state {
+            State::Canceled if !(recording && self.stopping()) => discard_input(&entry.job),
+            State::Done { .. } if recording => {
+                if let Err(e) = storage::mark_transcribed(&entry.job.input) {
+                    eprintln!(
+                        "não marquei a gravação {} como transcrita: {e}",
+                        entry.job.input.display()
+                    );
+                }
+            }
+            _ => {}
         }
         entry.job.state = state;
     }
@@ -258,7 +286,7 @@ impl Jobs {
     /// "Descartar": o envio do job concluído é apagado na hora.
     pub fn discard_audio(&self, id: JobId) -> Result<Job, AudioError> {
         let job = self.answer(id, AudioEvent::Discard)?;
-        remove_quietly(&job.input);
+        discard_input(&job);
         Ok(job)
     }
 
@@ -382,7 +410,7 @@ impl Jobs {
                 ..
             } = state
             {
-                remove_quietly(&entry.job.input);
+                discard_input(&entry.job);
             }
             entry.job.state = state;
         }
@@ -441,10 +469,19 @@ impl Jobs {
             .collect()
     }
 
-    /// Encerramento: os envios que esperavam a resposta são descartados.
-    pub(super) fn clear_uploads(&self) {
+    /// Encerramento: os envios saem todos, e as gravações já transcritas que esperavam a
+    /// resposta também. As outras gravações ficam e voltam na próxima abertura.
+    pub(super) fn clear_media(&self) {
         if let Err(e) = clear_uploads(&self.0.uploads) {
             eprintln!("não consegui esvaziar {}: {e}", self.0.uploads.display());
+        }
+        for entry in self.read().values() {
+            if let State::Done { audio, .. } = &entry.job.state
+                && entry.job.media == Media::Recording
+                && !audio.answered()
+            {
+                discard_input(&entry.job);
+            }
         }
     }
 
@@ -480,6 +517,14 @@ fn clear_uploads(dir: &Path) -> io::Result<()> {
 
 fn remove_quietly(path: &Path) {
     let _ = fs::remove_file(path);
+}
+
+/// Apaga a mídia do job: o envio, ou a pasta inteira da gravação.
+fn discard_input(job: &Job) {
+    match job.media {
+        Media::Recording => storage::remove_dir_quietly(&job.input),
+        Media::Video | Media::Audio => remove_quietly(&job.input),
+    }
 }
 
 /// Onde o `.m4a` é gravado antes de ganhar o nome escolhido: `<arquivo>.parte`, na mesma

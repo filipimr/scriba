@@ -118,6 +118,8 @@ pub enum MediaKind {
     #[default]
     Audio,
     Video,
+    /// Gravação ao vivo, com as duas trilhas.
+    Recording,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,7 +149,7 @@ impl Default for Files {
 pub struct Manifest {
     pub version: u32,
     pub id: String,
-    /// Nome do arquivo original.
+    /// Nome do arquivo original; numa gravação, "Gravação de 20/10, 14:30".
     pub name: String,
     pub media: MediaKind,
     pub size_bytes: u64,
@@ -186,10 +188,13 @@ pub struct Written {
     pub manifest: PathBuf,
 }
 
-/// Cria a pasta do job dentro de `output_dir` e grava os três arquivos. Se algo falha, a
-/// pasta é apagada: uma saída pela metade não fica para trás.
+/// Cria a pasta do job dentro de `output_dir` (`… - Gravação` numa gravação) e grava os três
+/// arquivos. Se algo falha, a pasta é apagada: uma saída pela metade não fica para trás.
 pub fn write(output_dir: &Path, t: &Transcript, manifest: &Manifest) -> io::Result<Written> {
-    let dir = create_unique_dir(output_dir, &folder_name(&t.header.date, &t.header.file))?;
+    let dir = create_unique_dir(
+        output_dir,
+        &folder_name(&t.header.date, t.header.folder_base()),
+    )?;
     let written = Written {
         txt: dir.join(TXT_FILE),
         md: dir.join(MD_FILE),

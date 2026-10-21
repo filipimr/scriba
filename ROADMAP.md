@@ -2,7 +2,7 @@
 
 App local para Windows, distribuído como um único `.exe`, que **grava** (microfone + som do PC) e **transcreve tudo o que foi falado** em vídeos, áudios e gravações, entregando o **texto**. A mídia é descartada depois, salvo se o usuário pedir para guardar o áudio. Este documento reúne as decisões de produto e de arquitetura, as fases de desenvolvimento com checklists, a política de testes, os riscos e o registro de decisões.
 
-Última atualização: 2026-10-20.
+Última atualização: 2026-10-21.
 
 ## Status das fases
 
@@ -359,7 +359,7 @@ O plano da fase a divide em duas etapas, cada uma com o próprio PR: 5.1 `media:
 
 **Entregas:**
 
-- [x] `media::encode_audio` (etapa 5.1): o áudio do original → `.m4a` AAC-LC mono a 64 kbps, na taxa do original até 32 kHz, com progresso e cancelamento. Um vídeo vira só o som. O mix da gravação entra na Fase 6.
+- [x] `media::encode_audio` (etapa 5.1): o áudio do original → `.m4a` AAC-LC mono a 64 kbps, na taxa do original até 32 kHz, com progresso e cancelamento. Um vídeo vira só o som. O mix da gravação entrou na etapa 6.2 (`media::encode_mix`).
 - [x] Card concluído com "Guardar o áudio?": "Descartar" (apaga o temporário) e "Guardar áudio"; depois, "Áudio guardado em …" e "Mostrar no Explorer" (o arquivo selecionado na pasta).
 - [x] "Guardar áudio" abre a janela "Salvar como" nativa do Windows pelo exe, na frente do navegador (lembra a última pasta), e grava o `.m4a` lá, com progresso e cancelar no card; cancelar a janela mantém a pergunta, e um erro vira toast.
 - [x] O temporário fica até a resposta ou a remoção do job e é apagado ao fechar o app e ao iniciar (sobras).
@@ -398,11 +398,11 @@ O plano da fase a divide em quatro etapas, cada uma com o próprio PR: 6.1 captu
 - [x] Thread de escrita (etapa 6.1): downmix para mono, reamostragem para 32 kHz, conversão para i16, WAV via `hound` com `flush` a cada 5 s. Alinhamento por timestamp. Medidores RMS.
 - [ ] Rotas `POST /api/record/start`, `POST /api/record/stop` e `GET /api/record/status`.
 - [ ] UI: tile escuro com botão grande e barra fixa "● Gravando 00:12:34 · Parar".
-- [ ] Job de gravação:
-  - Mixdown só se o usuário escolher "Guardar áudio", com o `media::encode_audio` da Fase 5.
-  - Transcrição de cada trilha, mesclada por tempo com os rótulos Você/Outros.
+- [x] Job de gravação (etapa 6.2: `Media::Recording`, `Job::recording`, `Jobs::submit_recording`):
+  - Mixdown só se o usuário escolher "Guardar áudio", com o `media::encode_mix` (as duas trilhas somadas, entregues ao mesmo encoder AAC da Fase 5, sem arquivo temporário).
+  - Transcrição de cada trilha, mesclada por tempo com os rótulos Você/Outros (`transcript::merge`).
   - Remoção do eco e geração do `transcricao.txt` e do `transcricao.md`.
-  - As trilhas ficam até a resposta a "Guardar o áudio?", como o envio (Fase 5): Descartar, Guardar áudio, Remover ou fechar o app com a pergunta pendente as apagam; uma gravação ainda não transcrita (Ctrl+C, crash) é retomada ao abrir o app.
+  - As trilhas ficam até a resposta a "Guardar o áudio?", como o envio (Fase 5): Descartar, Guardar áudio, Remover ou fechar o app com a pergunta pendente as apagam; uma gravação ainda não transcrita (Ctrl+C, crash) é retomada ao abrir o app (`app::resume_recordings`).
 - [ ] Robustez:
   - Dispositivo removido: salva o que foi gravado.
   - Troca da saída padrão: reabre o loopback.
@@ -410,11 +410,11 @@ O plano da fase a divide em quatro etapas, cada uma com o próprio PR: 6.1 captu
 
 **Testes:**
 
-- [ ] Unitários: downmix e i16; alinhamento e preenchimento; mescla e dedupe de eco (proptest); teto de duração.
+- [x] Unitários: downmix e i16; alinhamento e preenchimento; mescla e dedupe de eco (proptest); teto de duração (etapas 6.1 e 6.2).
 - [ ] Integração com `AudioSource` falso:
   - [x] Lacunas e jitter → trilhas alinhadas (±10 ms) (etapa 6.1, com deriva de +500 ppm e taxas diferentes).
   - [x] Erro de dispositivo → arquivo finalizado (etapa 6.1; a saída invalidada é reaberta).
-  - [ ] Fixtures "Você"/"Outros" + eco → texto rotulado e sem duplicatas.
+  - [x] Fixtures "Você"/"Outros" + eco → texto rotulado e sem duplicatas (etapa 6.2, `tests/engine.rs`).
 - [ ] E2E com `--fake-audio`: Gravar → timer → Parar → transcrição rotulada.
 - [x] Local: mic e loopback reais com 15 s de silêncio no meio (etapa 6.1, `tests/capture.rs`; também gravando com a CPU ocupada por uma transcrição e por 1 h).
 
@@ -609,6 +609,12 @@ Objetivo: o `scriba.exe` final roda em qualquer Windows sem instalar nada e se c
 | 2026-10-21 | Fase 6 | Suspensão do computador durante a gravação: enquanto grava, a thread de escrita pede ao Windows para não suspender por inatividade (`SetThreadExecutionState` com `ES_SYSTEM_REQUIRED`); se ele suspender mesmo assim (tampa fechada no intervalo, Modern Standby com a tela apagada), a gravação segue ao acordar, na mesma gravação: uma lacuna de mais de 30 s numa trilha tira o tempo suspenso do relógio das duas juntas (as marcações de tempo seguem corridas, e o status avisa a pausa), e um timestamp mais de 1 s no futuro (um dispositivo que voltou com o relógio errado) reancora só a trilha dele. Um intervalo da reunião com o computador ligado não dispara nada: os pacotes continuam chegando, silenciosos | Decisão do mantenedor (continuar em vez de encerrar, para uma reunião com intervalo). Na 1ª tentativa da gravação de 1 h, o notebook entrou em Modern Standby várias vezes durante a noite: o teste durou 10 h, o alinhamento preencheu 9,3 h de silêncio e o microfone voltou de uma suspensão com um timestamp 8,9 h à frente |
 | 2026-10-20 | Fase 6 | O `src/capture/wasapi.rs` (o `CpalSource`) sai do cálculo de cobertura do CI, como os spikes | Só roda com placa de som, que o runner não tem; a suíte local de hardware (`tests/capture.rs`) o exercita. Com ele, a cobertura cairia de ~91,9% para 89,4%, abaixo do piso de 90% |
 | 2026-10-20 | Fase 6 | Alinhamento pelo timestamp de captura de cada pacote (o QPC do 1º frame, o mesmo relógio nas duas trilhas): lacuna acima de 20 ms vira silêncio, deriva entre 2 e 20 ms é corrigida aos poucos pelo `swr_set_compensation`, pacote adiantado acima de 20 ms perde o começo; meta de ±10 ms entre as trilhas. Medidores por SSE (`GET /api/record/levels`); sem abas no header; eco removido por sobreposição (±1 s) e ≥ 60% das palavras em ordem (LCS); `.txt` de gravação com `Gravação:` no cabeçalho e `Você:`/`Outros:` depois do tempo, lidos só nesse caso | Plano da fase |
+| 2026-10-21 | Fase 6 | Etapa 6.2: a gravação vira job. `Media::Recording`, com o `Job.input` na pasta da gravação; `Job::recording` monta "Gravação de 20/10, 14:30", o tamanho dos dois WAVs, a duração e a estimativa = 2× a de um arquivo da mesma duração (o `Pipeline` ganha `estimate`, `None` por padrão). Saída na pasta `AAAA-MM-DD HHmm - Gravação`, `job.json` v1 com `"media": "recording"`; o download do `.txt`/`.md` usa o nome da pasta ("2026-10-20 1430 - Gravação - transcrição.txt"), porque o nome da lista tem `/` e `:` | Decisões 16 e 18 do plano da fase |
+| 2026-10-21 | Fase 6 | O `Engine` extrai as duas trilhas (sistema e depois microfone, cada uma com o seu `.f32` dentro da pasta da gravação) e só então as transcreve; em cada etapa, cada trilha fica com metade do progresso, e o card nunca volta de "Transcrevendo" para "Extraindo áudio". Uma trilha sem amostras (o app caiu antes do 1º `flush`) fica de fora | Progresso em duas metades sem regressão de etapa |
+| 2026-10-21 | Fase 6 | Eco (`transcript::merge`): um segmento "Você" é eco quando algum "Outros" cruza a janela de ±1 s em volta dele e ≥ 60% das palavras dele (minúsculas, sem pontuação e sem acento, por uma dobra à mão das letras do pt-BR, sem crate novo) aparecem em ordem (LCS) no texto "Outros" dessa janela. "Outros" passa intacto; a saída é ordenada por tempo, com "Outros" antes no empate. Nas fixtures (`voce-com-eco.wav` = "Você" + "Outros" a −12 dB e 60 ms depois), o modelo base transcreve o eco inteiro no microfone sozinho, e a mescla tira as duas frases | Decisão 17; proptest e `tests/engine.rs` |
+| 2026-10-21 | Fase 6 | Ciclo de vida das trilhas no store (decisão 5): Descartar, Guardar com sucesso, Remover e Cancelar (na fila ou rodando) apagam a pasta da gravação. No encerramento, só a gravação concluída com a pergunta sem resposta sai; a que estava na fila, rodando (o Ctrl+C a cancela, mas a pasta fica) ou que falhou volta na próxima abertura. Ao concluir, o `gravacao.json` passa a `"state": "transcrita"`, e o `capture::recover` apaga essas pastas ao iniciar (crash depois da transcrição), para não transcrever duas vezes | Decisão 1; `tests/jobs.rs` |
+| 2026-10-21 | Fase 6 | `media::encode_mix`: lê os WAVs com o `hound` (mono 16-bit, mesma taxa; senão o erro amigável de áudio ilegível), soma por blocos de 1 s com limite em ±1, completa a mais curta com silêncio e entrega ao `AacWriter` da Fase 5 (32 kHz), sem WAV misturado em disco; apaga o parcial em erro ou cancelamento. As fixtures novas (`voce.wav`, `outros.wav`, `voce-com-eco.wav`, 29,5 s a 32 kHz) saem do `cargo xtask fixtures --only …`, que ganha o `hound` | Decisão 19 |
+| 2026-10-21 | Fase 6 | Conferência local da 6.2 (`gravacao_real` em `tests/engine.rs`, build de release com Vulkan, RTX 3050 com o large-v3-turbo), feita assim: as trilhas reais da 6.1 em `%TEMP%\scriba-gravacao\silencio` (58,9 s; microfone: matriz Intel Smart Sound; saída: alto-falantes Realtek; 15 s do trecho da Câmara, 15 s sem nada, 15 s de novo, depois os marcadores) foram copiadas para um temporário, e o `voce.wav` (Maria) foi somado ao `mic.wav` real a partir de 16 s: a 1ª fala dela caiu no trecho sem nada tocando e a 2ª por cima da Câmara. O `Engine` transcreveu as duas trilhas em 21,1 s (com a carga do modelo). Resultado: "Outros" com 111 palavras do texto da audiência, idêntico (similaridade 1,00) à transcrição do `sistema.wav` sozinho; as duas falas da Maria como "Você" (similaridade 1,00 e 0,89; "email" saiu "e-mail"), num parágrafo só, porque o whisper as entregou num segmento; nenhum parágrafo "Você" repete "Outros" (0,20). O microfone desta máquina cancela os alto-falantes no DSP, então a trilha real não tinha eco a remover; a remoção foi provada nas fixtures (o base transcreve o eco de −12 dB inteiro no microfone sozinho). Uma pessoa falando de verdade fica para a primeira versão de uso | Verificação 2 do plano da fase |
 
 ## Referências verificadas
 

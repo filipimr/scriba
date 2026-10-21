@@ -10,7 +10,9 @@
 //! - `audio-ruim`: "Guardar áudio" falha na metade;
 //! - `audio-demorado`: só o "Guardar áudio" 10× mais devagar.
 //!
-//! "Guardar áudio" também não lê o envio: grava um texto fixo no lugar do `.m4a`.
+//! "Guardar áudio" também não lê o envio: grava um texto fixo no lugar do `.m4a`. Uma
+//! gravação ganha uma transcrição fixa com os rótulos "Você"/"Outros" e o mesmo texto fixo
+//! no "Guardar áudio".
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -22,7 +24,7 @@ use std::time::Duration;
 use super::id::JobId;
 use super::model::{Estimate, Failure, Job, Media, Outputs, Probe, Stage};
 use super::pipeline::{Ctx, Pipeline};
-use crate::transcript::{Segment, Timings};
+use crate::transcript::{Segment, Speaker, Timings};
 
 /// Passos de 5% por etapa.
 const STEPS: u8 = 20;
@@ -49,6 +51,22 @@ impl FakePipeline {
     pub const SEGMENTS: [(u64, u64, &'static str); 2] = [
         (0, 4_000, "Bom dia, esta é uma transcrição simulada."),
         (8_000, 12_000, "O Scriba não ouviu este arquivo."),
+    ];
+    /// O texto da transcrição de uma gravação, com os falantes.
+    pub const RECORDING_SEGMENTS: [(u64, u64, Speaker, &'static str); 3] = [
+        (
+            0,
+            4_000,
+            Speaker::Outros,
+            "Bom dia, esta é uma gravação simulada.",
+        ),
+        (5_000, 8_000, Speaker::Voce, "Bom dia, pessoal."),
+        (
+            9_000,
+            12_000,
+            Speaker::Outros,
+            "O Scriba não ouviu esta gravação.",
+        ),
     ];
 
     /// Grava as saídas em `output_dir`, com ~2 s por etapa.
@@ -90,6 +108,10 @@ impl Pipeline for FakePipeline {
 
     fn backend(&self) -> Option<String> {
         Some(Self::BACKEND.into())
+    }
+
+    fn estimate(&self, _duration_ms: u64) -> Option<Estimate> {
+        Some(Self::ESTIMATE)
     }
 
     fn save_audio(
@@ -158,14 +180,20 @@ impl Pipeline for FakePipeline {
                 }
             }
         }
-        let segments: Vec<Segment> = Self::SEGMENTS
-            .iter()
-            .map(|&(start_ms, end_ms, text)| Segment {
-                start_ms,
-                end_ms,
-                text: text.into(),
-            })
-            .collect();
+        let segments: Vec<Segment> = if job.media == Media::Recording {
+            Self::RECORDING_SEGMENTS
+                .iter()
+                .map(|&(start_ms, end_ms, speaker, text)| Segment {
+                    speaker: Some(speaker),
+                    ..Segment::new(start_ms, end_ms, text)
+                })
+                .collect()
+        } else {
+            Self::SEGMENTS
+                .iter()
+                .map(|&(start_ms, end_ms, text)| Segment::new(start_ms, end_ms, text))
+                .collect()
+        };
         crate::engine::write_outputs(
             &self.output_dir,
             job,
@@ -240,6 +268,31 @@ mod tests {
         assert!(txt.contains("[00:00:00] Bom dia"), "{txt}");
         assert!(txt.contains("[00:00:08] O Scriba"), "{txt}");
         assert!(outputs.md.is_file());
+    }
+
+    #[test]
+    fn gravacao_sai_rotulada() {
+        let dir = tempfile::tempdir().unwrap();
+        let rec = Job {
+            media: Media::Recording,
+            ..job("Gravação de 20/10, 14:30")
+        };
+        let (result, _) = run(&fake(&dir), &rec, false);
+        let outputs = result.unwrap();
+        assert!(
+            outputs
+                .dir
+                .ends_with(format!("{} - Gravação", rec.created.folder_stamp()))
+        );
+        let txt = std::fs::read_to_string(&outputs.txt).unwrap();
+        assert!(
+            txt.starts_with("Gravação: Você (microfone) e Outros (som do PC)\r\n"),
+            "{txt}"
+        );
+        assert!(txt.contains("[00:00:00] Outros: Bom dia, esta é"), "{txt}");
+        assert!(txt.contains("[00:00:05] Você: Bom dia, pessoal."), "{txt}");
+        let fake = fake(&dir);
+        assert_eq!(fake.estimate(1), Some(FakePipeline::ESTIMATE));
     }
 
     #[test]

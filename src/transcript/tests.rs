@@ -3,11 +3,7 @@ use proptest::prelude::*;
 use super::*;
 
 fn seg(start_ms: u64, end_ms: u64, text: &str) -> Segment {
-    Segment {
-        start_ms,
-        end_ms,
-        text: text.to_string(),
-    }
+    Segment::new(start_ms, end_ms, text)
 }
 
 fn date() -> LocalTime {
@@ -28,6 +24,7 @@ fn sample() -> Transcript {
             file: "Reunião de orçamento.mp4".to_string(),
             date: date(),
             duration_ms: 3_725_400,
+            recording: false,
         },
         &[
             seg(0, 2_000, " Bom dia."),
@@ -52,11 +49,13 @@ fn pausa_maior_que_1_5_s_quebra_o_paragrafo() {
         vec![
             Paragraph {
                 start_ms: 0,
-                text: "um dois".into()
+                text: "um dois".into(),
+                speaker: None,
             },
             Paragraph {
                 start_ms: 4_501,
-                text: "três quatro cinco".into()
+                text: "três quatro cinco".into(),
+                speaker: None,
             },
         ]
     );
@@ -113,15 +112,18 @@ fn parse_mantem_texto_fora_do_formato() {
         vec![
             Block {
                 start_ms: None,
-                text: "Notas soltas\nsegunda linha".into()
+                text: "Notas soltas\nsegunda linha".into(),
+                speaker: None,
             },
             Block {
                 start_ms: Some(62_000),
-                text: "fala".into()
+                text: "fala".into(),
+                speaker: None,
             },
             Block {
                 start_ms: None,
-                text: "[1:2:3] não é tempo".into()
+                text: "[1:2:3] não é tempo".into(),
+                speaker: None,
             },
         ]
     );
@@ -223,11 +225,7 @@ fn segments() -> impl Strategy<Value = Vec<Segment>> {
                 .map(|(gap, len, text)| {
                     let start = t + gap;
                     t = start + len;
-                    Segment {
-                        start_ms: start,
-                        end_ms: t,
-                        text,
-                    }
+                    Segment::new(start, t, text)
                 })
                 .collect()
         },
@@ -239,6 +237,7 @@ fn header() -> impl Strategy<Value = Header> {
         file,
         date: date(),
         duration_ms,
+        recording: false,
     })
 }
 
@@ -273,7 +272,11 @@ proptest! {
         let expected: Vec<Block> = t
             .paragraphs
             .iter()
-            .map(|p| Block { start_ms: Some(p.start_ms / 1_000 * 1_000), text: p.text.clone() })
+            .map(|p| Block {
+                start_ms: Some(p.start_ms / 1_000 * 1_000),
+                text: p.text.clone(),
+                speaker: None,
+            })
             .collect();
         prop_assert_eq!(parsed.blocks, expected);
     }
@@ -300,5 +303,210 @@ proptest! {
     fn nome_limpo_nunca_e_invalido_nem_vazio(name in "\\PC{0,120}|[ .]{0,5}(con|NUL|com3|lpt9)[ .a-z]{0,5}") {
         let clean = clean_name(&name);
         prop_assert!(valid_name(&clean), "{name:?} → {clean:?}");
+    }
+}
+
+fn recording() -> Transcript {
+    let voce = |s, e, t| Segment {
+        speaker: Some(Speaker::Voce),
+        ..seg(s, e, t)
+    };
+    let outros = |s, e, t| Segment {
+        speaker: Some(Speaker::Outros),
+        ..seg(s, e, t)
+    };
+    Transcript::new(
+        Header {
+            file: "Gravação de 19/10, 14:30".to_string(),
+            date: date(),
+            duration_ms: 2_832_000,
+            recording: true,
+        },
+        &[
+            voce(3_000, 4_500, " Bom dia, pessoal."),
+            outros(6_000, 8_000, " Bom dia. Vamos começar pelo *orçamento*."),
+            // Menos de 1,5 s depois: mesmo parágrafo.
+            outros(8_500, 9_000, " Alguém tem dúvidas?"),
+            voce(9_200, 10_000, " Você: eu tenho."),
+        ],
+    )
+}
+
+#[test]
+fn troca_de_falante_quebra_o_paragrafo() {
+    let t = recording();
+    let p: Vec<_> = t
+        .paragraphs
+        .iter()
+        .map(|p| (p.start_ms, p.speaker, p.text.as_str()))
+        .collect();
+    assert_eq!(
+        p,
+        [
+            (3_000, Some(Speaker::Voce), "Bom dia, pessoal."),
+            (
+                6_000,
+                Some(Speaker::Outros),
+                "Bom dia. Vamos começar pelo *orçamento*. Alguém tem dúvidas?"
+            ),
+            (9_200, Some(Speaker::Voce), "Você: eu tenho."),
+        ]
+    );
+}
+
+#[test]
+fn txt_de_gravacao() {
+    let txt = render_txt(&recording());
+    assert!(txt.starts_with(
+        "Gravação: Você (microfone) e Outros (som do PC)\r\nData: 19/10/2026 14:30\r\nDuração: 00:47:12\r\n"
+    ));
+    insta::assert_snapshot!(txt.replace("\r\n", "⏎\n"));
+}
+
+#[test]
+fn md_de_gravacao() {
+    insta::assert_snapshot!(render_md(&recording()));
+}
+
+#[test]
+fn parse_le_os_falantes_da_gravacao() {
+    let parsed = parse(&render_txt(&recording()));
+    assert!(parsed.recording);
+    assert_eq!(parsed.file, None);
+    assert_eq!(parsed.date.as_deref(), Some("19/10/2026 14:30"));
+    let blocks: Vec<_> = parsed
+        .blocks
+        .iter()
+        .map(|b| (b.speaker, b.text.as_str()))
+        .collect();
+    assert_eq!(
+        blocks,
+        [
+            (Some(Speaker::Voce), "Bom dia, pessoal."),
+            (
+                Some(Speaker::Outros),
+                "Bom dia. Vamos começar pelo *orçamento*. Alguém tem dúvidas?"
+            ),
+            // Só o primeiro rótulo é do formato.
+            (Some(Speaker::Voce), "Você: eu tenho."),
+        ]
+    );
+}
+
+#[test]
+fn envio_nunca_ganha_rotulo() {
+    // Um arquivo cuja fala começa com "Você:" continua sem falante.
+    let t = Transcript::new(
+        Header {
+            file: "entrevista.mp3".into(),
+            date: date(),
+            duration_ms: 60_000,
+            recording: false,
+        },
+        &[
+            seg(0, 1_000, "Você: já chegou?"),
+            seg(5_000, 6_000, "Outros: ainda não."),
+        ],
+    );
+    let parsed = parse(&render_txt(&t));
+    assert!(!parsed.recording);
+    assert!(parsed.blocks.iter().all(|b| b.speaker.is_none()));
+    assert_eq!(parsed.blocks[0].text, "Você: já chegou?");
+    // Transcrição de antes da Fase 6, sem o cabeçalho de gravação.
+    let old = parse("Arquivo: a.mp4\r\nData: 1\r\nDuração: 2\r\n\r\n[00:00:01] Outros: oi\r\n");
+    assert_eq!(old.blocks[0].speaker, None);
+    assert_eq!(old.blocks[0].text, "Outros: oi");
+    // Rótulo sem tempo é texto solto.
+    let loose = parse("Gravação: x\r\n\r\nVocê: sem tempo\r\n");
+    assert_eq!(loose.blocks[0].speaker, None);
+}
+
+#[test]
+fn gravacao_vai_para_a_pasta_gravacao() {
+    let tmp = tempfile::tempdir().unwrap();
+    let t = recording();
+    let manifest = Manifest {
+        name: t.header.file.clone(),
+        media: MediaKind::Recording,
+        ..Manifest::default()
+    };
+    let w = write(tmp.path(), &t, &manifest).unwrap();
+    assert_eq!(w.dir, tmp.path().join("2026-10-19 1430 - Gravação"));
+    let json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&w.manifest).unwrap()).unwrap();
+    assert_eq!(json["media"], "recording");
+    assert_eq!(json["name"], "Gravação de 19/10, 14:30");
+    assert_eq!(json["version"], 1);
+}
+
+/// Segmentos de gravação: cada um de um falante, às vezes com o texto começando por um
+/// rótulo.
+fn speaker_segments() -> impl Strategy<Value = Vec<Segment>> {
+    (
+        segments(),
+        prop::collection::vec((any::<bool>(), prop_oneof!["", "Você: ", "Outros: "]), 12),
+    )
+        .prop_map(|(segments, extra)| {
+            segments
+                .into_iter()
+                .zip(extra)
+                .map(|(s, (voce, prefix))| Segment {
+                    speaker: Some(if voce { Speaker::Voce } else { Speaker::Outros }),
+                    text: format!("{prefix}{}", s.text),
+                    ..s
+                })
+                .collect()
+        })
+}
+
+proptest! {
+    #[test]
+    fn render_e_parse_da_gravacao_voltam_iguais(
+        header in header(),
+        segments in speaker_segments(),
+    ) {
+        let t = Transcript::new(Header { recording: true, ..header }, &segments);
+        let parsed = parse(&render_txt(&t));
+        prop_assert!(parsed.recording);
+        prop_assert_eq!(parsed.file, None);
+        prop_assert_eq!(parsed.date, Some(t.header.date.display()));
+        prop_assert_eq!(parsed.duration, Some(timestamp(t.header.duration_ms)));
+        let expected: Vec<Block> = t
+            .paragraphs
+            .iter()
+            .map(|p| Block {
+                start_ms: Some(p.start_ms / 1_000 * 1_000),
+                text: p.text.clone(),
+                speaker: p.speaker,
+            })
+            .collect();
+        prop_assert_eq!(parsed.blocks, expected);
+        let md = render_md(&t);
+        for p in &t.paragraphs {
+            let line = format!(
+                "**[{}] {}:** {}",
+                timestamp(p.start_ms),
+                p.speaker.unwrap().label(),
+                escape_md(&p.text)
+            );
+            prop_assert!(md.lines().any(|l| l == line), "falta {line:?}");
+        }
+    }
+
+    /// Um envio cujo texto começa com um rótulo continua sem falante.
+    #[test]
+    fn envio_com_texto_de_rotulo_nao_ganha_falante(
+        header in header(),
+        segments in speaker_segments(),
+    ) {
+        let segments: Vec<Segment> =
+            segments.into_iter().map(|s| Segment { speaker: None, ..s }).collect();
+        let t = Transcript::new(header, &segments);
+        let parsed = parse(&render_txt(&t));
+        prop_assert!(!parsed.recording);
+        let texts: Vec<&str> = parsed.blocks.iter().map(|b| b.text.as_str()).collect();
+        let expected: Vec<&str> = t.paragraphs.iter().map(|p| p.text.as_str()).collect();
+        prop_assert_eq!(texts, expected);
+        prop_assert!(parsed.blocks.iter().all(|b| b.speaker.is_none()));
     }
 }

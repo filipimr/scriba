@@ -12,7 +12,7 @@ use axum::response::{Html, IntoResponse, Response};
 use tokio::io::{AsyncWriteExt, BufWriter};
 
 use super::AppState;
-use super::reader::{Kind, download_name, folder_label};
+use super::reader::{Kind, download_base, download_name, folder_label};
 use crate::clock::LocalTime;
 use crate::jobs::{
     Audio, Estimate, FORMATS, Failure, Job, JobId, Jobs, Media, PANIC_MESSAGE, Probe, RemoveError,
@@ -205,8 +205,8 @@ impl Card {
             done: match &job.state {
                 JobState::Done { outputs, audio } => Some(Done {
                     folder: folder_label(&outputs.dir),
-                    txt_name: download_name(&job.name, Kind::Txt),
-                    md_name: download_name(&job.name, Kind::Md),
+                    txt_name: download_name(&download_base(job), Kind::Txt),
+                    md_name: download_name(&download_base(job), Kind::Md),
                     audio: AudioView::new(audio),
                 }),
                 _ => None,

@@ -64,16 +64,13 @@ impl Pipeline for WebPipeline {
         let segments: Vec<Segment> = SPEECH
             .iter()
             .filter(|_| !job.name.contains("sem-fala"))
-            .map(|&(start_ms, end_ms, text)| Segment {
-                start_ms,
-                end_ms,
-                text: text.into(),
-            })
+            .map(|&(start_ms, end_ms, text)| Segment::new(start_ms, end_ms, text))
             .collect();
         let header = Header {
             file: job.name.clone(),
             date: job.created,
             duration_ms: job.duration_ms,
+            recording: false,
         };
         let t = Transcript::new(header, &segments);
         let outputs = Outputs {

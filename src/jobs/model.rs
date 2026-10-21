@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use super::id::JobId;
+use crate::capture::Recording;
 use crate::clock::LocalTime;
 
 /// Formatos aceitos no envio: o primeiro filtro, pela extensão, antes do probe.
@@ -25,6 +26,8 @@ pub const PANIC_MESSAGE: &str = "Erro inesperado ao processar o arquivo.";
 pub enum Media {
     Video,
     Audio,
+    /// Uma gravação ao vivo: as duas trilhas WAV numa pasta.
+    Recording,
 }
 
 impl Media {
@@ -275,24 +278,55 @@ impl State {
     }
 }
 
-/// Um arquivo enviado.
+/// Um arquivo enviado ou uma gravação.
 #[derive(Clone, Debug)]
 pub struct Job {
     pub id: JobId,
-    /// Nome original, só para exibir: nunca vira caminho.
+    /// Nome original, só para exibir: nunca vira caminho. Numa gravação, "Gravação de
+    /// 20/10, 14:30".
     pub name: String,
     pub media: Media,
     pub size: u64,
     /// Do probe; 0 quando o arquivo não informa.
     pub duration_ms: u64,
-    /// Hora local do envio, a mesma do nome da pasta da saída.
+    /// Hora local do envio (ou do Gravar), a mesma do nome da pasta da saída.
     pub created: LocalTime,
     pub estimate: Option<Estimate>,
-    /// Cópia enviada, em `uploads/`. Num job concluído, fica até a resposta a "Guardar o
-    /// áudio?"; num que falhou, para o "Tentar de novo". Apagada quando o job é cancelado ou
-    /// removido, e ao fechar o app.
+    /// Cópia enviada, em `uploads/`; numa gravação, a pasta dela em `gravacoes/`. Num job
+    /// concluído, fica até a resposta a "Guardar o áudio?"; num que falhou, para o "Tentar
+    /// de novo". Apagada quando o job é cancelado ou removido, e ao fechar o app (a
+    /// gravação, só depois de transcrita: senão ela volta na próxima abertura).
     pub input: PathBuf,
     pub state: State,
+}
+
+/// O começo do nome de uma gravação na lista.
+pub const RECORDING_PREFIX: &str = "Gravação de";
+
+impl Job {
+    /// O job de uma gravação terminada. `file_estimate` é a estimativa de um arquivo da
+    /// mesma duração: as duas trilhas custam até o dobro (sem fone, o eco também é
+    /// transcrito antes de sair).
+    pub fn recording(rec: Recording, file_estimate: Option<Estimate>) -> Self {
+        let c = rec.created;
+        Self {
+            id: rec.id,
+            name: format!(
+                "{RECORDING_PREFIX} {:02}/{:02}, {:02}:{:02}",
+                c.day, c.month, c.hour, c.minute
+            ),
+            media: Media::Recording,
+            size: rec.size,
+            duration_ms: rec.duration_ms,
+            created: rec.created,
+            estimate: file_estimate.map(|e| Estimate {
+                secs: e.secs * 2,
+                ..e
+            }),
+            input: rec.dir,
+            state: State::Queued,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -402,6 +436,50 @@ mod tests {
         .unwrap();
         assert_eq!(again, State::Queued);
         assert!(again.apply(Event::Start(Stage::ExtractingAudio)).is_ok());
+    }
+
+    #[test]
+    fn job_de_gravacao() {
+        let created = LocalTime {
+            year: 2026,
+            month: 10,
+            day: 20,
+            hour: 9,
+            minute: 5,
+            second: 59,
+            offset_minutes: -180,
+        };
+        let rec = Recording {
+            id: JobId::generate(),
+            dir: "C:/dados/gravacoes/x".into(),
+            created,
+            duration_ms: 90_000,
+            size: 11_520_088,
+            mic: "Microfone".into(),
+            output: "Alto-falantes".into(),
+            end: crate::capture::End::User,
+            stats: Default::default(),
+        };
+        let estimate = Estimate {
+            secs: 40,
+            gpu: true,
+        };
+        let job = Job::recording(rec.clone(), Some(estimate));
+        assert_eq!(job.id, rec.id);
+        assert_eq!(job.name, "Gravação de 20/10, 09:05");
+        assert_eq!(job.media, Media::Recording);
+        assert_eq!((job.size, job.duration_ms), (11_520_088, 90_000));
+        assert_eq!(job.created, created);
+        assert_eq!(job.input, rec.dir);
+        assert_eq!(job.state, State::Queued);
+        assert_eq!(
+            job.estimate,
+            Some(Estimate {
+                secs: 80,
+                gpu: true
+            })
+        );
+        assert_eq!(Job::recording(rec, None).estimate, None);
     }
 
     #[test]

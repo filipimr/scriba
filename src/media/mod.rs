@@ -2,7 +2,8 @@
 //! original, e `extract_audio` entrega a melhor faixa de áudio em 16 kHz mono f32, sem
 //! decodificar o vídeo. `extract_audio_into` entrega o áudio aos poucos (para o [`Spool`],
 //! em disco), sem segurar a duração inteira na memória. `encode_audio` guarda o áudio do
-//! original num `.m4a` AAC mono. O [`Resampler`] leva as trilhas da gravação à taxa do WAV.
+//! original num `.m4a` AAC mono, e `encode_mix` as duas trilhas de uma gravação misturadas
+//! num só. O [`Resampler`] leva as trilhas da gravação à taxa do WAV.
 
 mod resample;
 mod spool;
@@ -217,8 +218,11 @@ pub fn encode_audio(
     progress: impl FnMut(u8),
     cancel: &AtomicBool,
 ) -> Result<(), Error> {
-    let result = encode(input, output, progress, cancel);
-    // O muxer já foi fechado: o Windows deixa apagar.
+    remove_partial(output, encode(input, output, progress, cancel))
+}
+
+/// Num erro, apaga o `.m4a` pela metade. O muxer já foi fechado: o Windows deixa apagar.
+fn remove_partial(output: &Path, result: Result<(), Error>) -> Result<(), Error> {
     if result.is_err()
         && let Err(e) = std::fs::remove_file(output)
         && e.kind() != io::ErrorKind::NotFound
@@ -226,6 +230,100 @@ pub fn encode_audio(
         eprintln!("media: não apaguei {}: {e}", output.display());
     }
     result
+}
+
+/// Mistura as trilhas WAV de uma gravação (mono 16-bit, todas na mesma taxa) num `.m4a`
+/// AAC-LC mono em `output`, como o [`encode_audio`]: soma amostra a amostra, com limite em
+/// ±1, sem WAV misturado em disco. A trilha mais curta vira silêncio no fim; a duração é a
+/// da mais longa. `progress` vai de 0 a 100 pelas amostras; `cancel` é checado a cada
+/// segundo de áudio. Em qualquer erro, o arquivo parcial é apagado.
+pub fn encode_mix(
+    inputs: &[&Path],
+    output: &Path,
+    progress: impl FnMut(u8),
+    cancel: &AtomicBool,
+) -> Result<(), Error> {
+    remove_partial(output, mix(inputs, output, progress, cancel))
+}
+
+fn mix(
+    inputs: &[&Path],
+    output: &Path,
+    mut progress: impl FnMut(u8),
+    cancel: &AtomicBool,
+) -> Result<(), Error> {
+    let mut readers = Vec::with_capacity(inputs.len());
+    for path in inputs {
+        let reader = hound::WavReader::open(path).map_err(|e| {
+            eprintln!("media: {} não abriu: {e}", path.display());
+            Error::Unreadable
+        })?;
+        readers.push(reader);
+    }
+    let spec = readers.first().ok_or(Error::NotMedia)?.spec();
+    if let Some((path, other)) = inputs
+        .iter()
+        .zip(&readers)
+        .map(|(p, r)| (p, r.spec()))
+        .find(|(_, s)| {
+            s.channels != 1
+                || s.bits_per_sample != 16
+                || s.sample_format != hound::SampleFormat::Int
+                || s.sample_rate != spec.sample_rate
+        })
+    {
+        eprintln!(
+            "media: {} fora do formato da gravação: {other:?}",
+            path.display()
+        );
+        return Err(Error::Unreadable);
+    }
+    let rate = spec.sample_rate;
+    let total = readers
+        .iter()
+        .map(|r| u64::from(r.duration()))
+        .max()
+        .unwrap_or(0);
+    if total == 0 {
+        return Err(Error::Unreadable);
+    }
+    let mut writer = AacWriter::create(output, audio_rate(rate))?;
+    let block = rate as usize;
+    let mut samples: Vec<_> = readers.iter_mut().map(|r| r.samples::<i16>()).collect();
+    let mut mixed = vec![0f32; block];
+    let mut done = 0u64;
+    let mut last_pct = None;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(Error::Canceled);
+        }
+        let pct = (done * 100 / total) as u8;
+        if last_pct != Some(pct) {
+            last_pct = Some(pct);
+            progress(pct);
+        }
+        mixed.fill(0.0);
+        let mut len = 0;
+        for track in &mut samples {
+            for (i, sample) in track.by_ref().take(block).enumerate() {
+                let sample = sample.map_err(|e| {
+                    eprintln!("media: trilha da gravação ilegível: {e}");
+                    Error::Unreadable
+                })?;
+                mixed[i] += f32::from(sample) / 32_768.0;
+                len = len.max(i + 1);
+            }
+        }
+        if len == 0 {
+            break;
+        }
+        for s in &mut mixed[..len] {
+            *s = s.clamp(-1.0, 1.0);
+        }
+        writer.push(&mixed[..len])?;
+        done += len as u64;
+    }
+    writer.finish()
 }
 
 fn encode(

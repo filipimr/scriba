@@ -2440,6 +2440,7 @@ dependencies = [
  "anyhow",
  "clap",
  "hex",
+ "hound",
  "insta",
  "serde_yaml_ng",
  "sha2",
