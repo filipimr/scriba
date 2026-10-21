@@ -11,13 +11,16 @@ use std::time::{Duration, Instant};
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use scriba::asr::{Asr, Models};
+use scriba::capture::{
+    AudioSource, Devices, Error as CaptureError, Events, Limits, Opened, Recorder, Track,
+};
 use scriba::config::{Config, Paths};
 use scriba::dialog::{SaveDialog, SaveRequest};
 use scriba::engine::Engine;
 use scriba::jobs::{Ctx, Estimate, Failure, Job, Jobs, Media, Outputs, Pipeline, Probe};
 use scriba::opener::Opener;
 use scriba::transcript::{self, Header, Segment, Transcript};
-use scriba::web::{AppState, router};
+use scriba::web::{AppState, Desktop, router};
 use tower::ServiceExt;
 
 mod common;
@@ -59,7 +62,11 @@ impl Pipeline for WebPipeline {
         if job.name.contains("falha") {
             return Err(Failure::Error("Falhou de propósito.".into()));
         }
-        let dir = self.out.join(format!("pasta {}", job.name));
+        // O nome de uma gravação tem "/" e ":".
+        let dir = match job.media {
+            Media::Recording => self.out.join(format!("pasta gravação {}", job.id)),
+            _ => self.out.join(format!("pasta {}", job.name)),
+        };
         std::fs::create_dir_all(&dir).unwrap();
         let segments: Vec<Segment> = SPEECH
             .iter()
@@ -181,15 +188,36 @@ fn dialog_state(
     opener: Arc<Recording>,
     dialog: Arc<Answers>,
 ) -> AppState {
+    let recorder = Recorder::new(Arc::new(NoAudio), paths.recordings_dir(), Limits::default());
     AppState::new(
         TOKEN.into(),
         "inst-1".into(),
         PORT,
         paths,
         jobs,
-        opener,
-        dialog,
+        Desktop {
+            opener,
+            dialog,
+            recorder,
+        },
     )
+}
+
+/// Sem dispositivos de som: os testes que não gravam nunca abrem o cpal.
+struct NoAudio;
+
+impl AudioSource for NoAudio {
+    fn devices(&self) -> Result<Devices, CaptureError> {
+        Ok(Devices::default())
+    }
+
+    fn now_ns(&self) -> u64 {
+        0
+    }
+
+    fn open(&self, _: Track, _: Option<&str>, _: Events) -> Result<Opened, CaptureError> {
+        Err(CaptureError::NoMic)
+    }
 }
 
 /// Com o worker, o opener que registra e o "Salvar como" de teste.
@@ -257,6 +285,14 @@ async fn pagina_inicial_com_cookie() {
             .starts_with("text/html")
     );
     assert!(headers.contains_key(header::CONTENT_SECURITY_POLICY));
+    // O "Voltar" do navegador não mostra a lista de antes.
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    // Sem gravação: o painel parado e o lugar vazio da barra.
+    assert!(body.contains(r#"aria-label="Gravar""#), "{body}");
+    assert!(
+        body.contains(r#"<div id="barra-gravacao"></div>"#),
+        "{body}"
+    );
     assert!(
         body.contains("<html lang=\"pt-BR\">"),
         "modo Sistema não fixa data-theme"
@@ -1228,4 +1264,324 @@ async fn cancelar_a_gravacao_e_remover_so_depois() {
     let (status, _, _) = send(&s, with_origin(Request::delete(&remove))).await;
     assert_eq!(status, StatusCode::OK);
     assert!(uploads(&dir).is_empty(), "remover apaga o temporário");
+}
+/// As rotas da gravação com o `FakeSource` em tempo real; a gravação terminada vai para a
+/// fila como no app.
+#[cfg(feature = "test-support")]
+mod gravacao {
+    use super::*;
+    use scriba::capture::fake::Script;
+    use scriba::capture::{EventKind, FakeSource};
+
+    fn limits(free: u64) -> Limits {
+        Limits {
+            free_space: Arc::new(move |_| Some(free)),
+            ..Limits::default()
+        }
+    }
+
+    fn rec_state(
+        dir: &tempfile::TempDir,
+        free: u64,
+    ) -> (AppState, scriba::jobs::Worker, Arc<FakeSource>) {
+        let paths = paths(dir);
+        let (jobs, worker) = Jobs::start(paths.uploads_dir(), pipeline(&paths)).unwrap();
+        let source = Arc::new(FakeSource::new(Script::tones()));
+        let recorder = Recorder::new(source.clone(), paths.recordings_dir(), limits(free));
+        {
+            let jobs = jobs.clone();
+            recorder.on_finish(move |rec| {
+                jobs.submit_recording(rec);
+            });
+        }
+        let state = AppState::new(
+            TOKEN.into(),
+            "inst-1".into(),
+            PORT,
+            paths,
+            jobs,
+            Desktop {
+                opener: Arc::new(Recording::default()),
+                dialog: Arc::new(Answers::default()),
+                recorder,
+            },
+        );
+        (state, worker, source)
+    }
+
+    fn post_to(uri: &str) -> Request<Body> {
+        with_origin(Request::post(uri))
+    }
+
+    async fn status_of(s: &AppState, uri: &str) -> (StatusCode, axum::http::HeaderMap, String) {
+        send(s, get(uri).body(Body::empty()).unwrap()).await
+    }
+
+    fn recording_id(html: &str) -> String {
+        let at = html.find("/api/record/status?id=").expect(html) + 22;
+        html[at..at + 26].to_string()
+    }
+
+    fn form(body: &str) -> Request<Body> {
+        let req = with_origin(
+            Request::post("/api/record/devices")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded"),
+        );
+        req.map(|_| Body::from(body.to_string()))
+    }
+
+    #[tokio::test]
+    async fn gravar_status_e_parar_cria_o_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let (s, _worker, source) = rec_state(&dir, u64::MAX);
+
+        let (status, _, html) = send(&s, post_to("/api/record/start?painel=1")).await;
+        assert_eq!(status, StatusCode::OK, "{html}");
+        assert!(html.contains(r#"id="barra-gravacao""#), "{html}");
+        assert!(html.contains("record-button-recording"), "{html}");
+        assert!(html.contains("Gravação iniciada."), "{html}");
+        assert_eq!(source.opens(Track::Mic), 1);
+        let id = recording_id(&html);
+
+        tokio::time::sleep(Duration::from_millis(1_200)).await;
+        let uri = format!("/api/record/status?id={id}&painel=1");
+        let (status, _, html) = status_of(&s, &uri).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("00:00:01"), "{html}");
+        assert!(html.contains(r#"id="gravar-tempo""#), "{html}");
+        // O polling não troca o painel inteiro (os Ajustes abertos fechariam).
+        assert!(!html.contains(r#"id="gravar" "#), "{html}");
+
+        // A página recarregada já mostra a gravação.
+        let (_, _, page) = get_page(&s, "/").await;
+        assert!(page.contains("record-button-recording"), "{page}");
+        assert!(page.contains("data-gravando"), "{page}");
+
+        let (status, _, html) = send(&s, post_to("/api/record/stop?painel=1")).await;
+        assert_eq!(status, StatusCode::OK, "{html}");
+        assert!(html.contains("Gravação parada. Transcrevendo."), "{html}");
+        assert!(html.contains(r#"hx-swap-oob="afterbegin:#jobs""#), "{html}");
+        assert!(html.contains(&format!(r#"id="job-{id}""#)), "{html}");
+        assert!(html.contains("lucide-mic"), "{html}");
+        assert!(!html.contains("data-gravando"), "{html}");
+        let job = s.jobs.get(id.parse().unwrap()).unwrap();
+        assert_eq!(job.media, Media::Recording);
+        assert!(job.duration_ms >= 1_000, "{}", job.duration_ms);
+
+        // O polling de uma gravação que esta aba não acompanhava só para.
+        let (status, _, html) = status_of(&s, "/api/record/status?id=x&painel=1").await;
+        assert_eq!(status.as_u16(), 286);
+        assert!(!html.contains("job-card"), "{html}");
+        // O job conclui com a transcrição.
+        let html = final_card(&s, &id).await;
+        assert!(html.contains("Concluído"), "{html}");
+    }
+
+    #[tokio::test]
+    async fn uma_gravacao_por_vez_e_parar_sem_gravacao() {
+        let dir = tempfile::tempdir().unwrap();
+        let (s, _worker, source) = rec_state(&dir, u64::MAX);
+        let (status, _, body) = send(&s, post_to("/api/record/stop")).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body, "Nenhuma gravação em andamento.");
+
+        let (status, _, _) = send(&s, post_to("/api/record/start")).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _, body) = send(&s, post_to("/api/record/start?painel=1")).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body, "Já há uma gravação em andamento.");
+        assert_eq!(source.opens(Track::Mic), 1);
+        let (status, _, html) = send(&s, post_to("/api/record/stop")).await;
+        assert_eq!(status, StatusCode::OK);
+        // Sem o painel (o leitor): só a barra e o aviso, sem o card.
+        assert!(!html.contains("job-card"), "{html}");
+        assert!(!html.contains(r#"id="gravar""#), "{html}");
+    }
+
+    #[tokio::test]
+    async fn erros_ao_comecar_aparecem_no_painel_ou_no_toast() {
+        let dir = tempfile::tempdir().unwrap();
+        let (s, _worker, source) = rec_state(&dir, 0);
+        let (status, _, html) = send(&s, post_to("/api/record/start?painel=1")).await;
+        assert_eq!(status, StatusCode::INSUFFICIENT_STORAGE);
+        assert!(html.contains("Pouco espaço em disco"), "{html}");
+        assert!(html.contains(r#"role="alert""#), "{html}");
+        assert_eq!(source.opens(Track::Mic), 0);
+
+        let dir = tempfile::tempdir().unwrap();
+        let (s, _worker, source) = rec_state(&dir, u64::MAX);
+        source.edit(|script| script.mic.open_error = Some(CaptureError::MicDenied));
+        let (status, _, html) = send(&s, post_to("/api/record/start?painel=1")).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(html.contains("Privacidade"), "{html}");
+        // Sem o painel, o erro vai para o toast.
+        source.edit(|script| script.mic.open_error = Some(CaptureError::NoMic));
+        let (status, headers, _) = send(&s, post_to("/api/record/start")).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        let trigger = headers["hx-trigger"].to_str().unwrap();
+        assert!(trigger.contains("scriba-erro"), "{trigger}");
+        // Nada sobrou das tentativas.
+        let left = std::fs::read_dir(s.paths.recordings_dir())
+            .map(|d| d.count())
+            .unwrap_or(0);
+        assert_eq!(left, 0);
+    }
+
+    #[tokio::test]
+    async fn fim_automatico_chega_pelo_status_com_o_toast() {
+        let dir = tempfile::tempdir().unwrap();
+        let (s, _worker, source) = rec_state(&dir, u64::MAX);
+        let lose_at = source.now_ns() / 1_000_000 + 400;
+        source.edit(|script| script.mic.fail = Some((lose_at, EventKind::Lost)));
+        let (_, _, html) = send(&s, post_to("/api/record/start?painel=1")).await;
+        let id = recording_id(&html);
+        let uri = format!("/api/record/status?id={id}&painel=1");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (headers, html) = loop {
+            let (status, headers, html) = status_of(&s, &uri).await;
+            if status.as_u16() == 286 {
+                break (headers, html);
+            }
+            assert!(Instant::now() < deadline, "a gravação não parou");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        let trigger = headers["hx-trigger"].to_str().unwrap();
+        let event: serde_json::Value = serde_json::from_str(trigger).unwrap();
+        assert_eq!(
+            event["scriba-erro"],
+            "O microfone foi desconectado. A gravação parou e vai ser transcrita."
+        );
+        assert!(html.contains(&format!(r#"id="job-{id}""#)), "{html}");
+        assert!(
+            html.contains(r#"<div id="barra-gravacao"></div>"#),
+            "{html}"
+        );
+        assert!(s.jobs.get(id.parse().unwrap()).is_some());
+    }
+
+    #[tokio::test]
+    async fn sse_dos_medidores_tem_eventos_e_termina_no_parar() {
+        let dir = tempfile::tempdir().unwrap();
+        let (s, _worker, _) = rec_state(&dir, u64::MAX);
+        send(&s, post_to("/api/record/start")).await;
+        let res = router(s.clone())
+            .oneshot(get("/api/record/levels").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.headers()[header::CONTENT_TYPE], "text/event-stream");
+        let body = tokio::spawn(to_bytes(res.into_body(), usize::MAX));
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        send(&s, post_to("/api/record/stop")).await;
+        let body = tokio::time::timeout(Duration::from_secs(5), body)
+            .await
+            .expect("o SSE não terminou no Parar")
+            .unwrap()
+            .unwrap();
+        let text = String::from_utf8_lossy(&body);
+        let events = text.matches(r#"data: {"tempo":"#).count();
+        assert!(events >= 3, "{text}");
+        assert!(text.contains("event: fim"), "{text}");
+
+        // Sem gravação, só o fim.
+        let (status, _, text) = status_of(&s, "/api/record/levels").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(text.starts_with("event: fim"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn sse_termina_quando_o_app_fecha() {
+        let dir = tempfile::tempdir().unwrap();
+        let (s, _worker, _) = rec_state(&dir, u64::MAX);
+        send(&s, post_to("/api/record/start")).await;
+        let res = router(s.clone())
+            .oneshot(get("/api/record/levels").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = tokio::spawn(to_bytes(res.into_body(), usize::MAX));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        s.close();
+        let body = tokio::time::timeout(Duration::from_secs(2), body)
+            .await
+            .expect("o SSE segurou o encerramento")
+            .unwrap()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("event: fim"));
+        assert!(s.recorder.finish_on_exit().is_some());
+    }
+
+    #[tokio::test]
+    async fn ajustes_salvam_no_config_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let (s, _worker, _) = rec_state(&dir, u64::MAX);
+        let (status, _, html) = get_page(&s, "/api/record/devices").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            html.contains("Padrão do Windows (Microfone simulado)"),
+            "{html}"
+        );
+        assert!(!html.contains("Microfone Bluetooth"), "{html}");
+
+        let (status, _, html) = send(&s, form("mic=falso%3Afone-bt&output=")).await;
+        assert_eq!(status, StatusCode::OK, "{html}");
+        assert!(html.contains("Microfone Bluetooth"), "{html}");
+        let config = Config::load(&s.paths.config_file());
+        assert_eq!(config.mic.as_deref(), Some("falso:fone-bt"));
+        assert_eq!(config.output, None);
+
+        // Durante a gravação, os selects ficam inativos e a escolha não muda.
+        send(&s, post_to("/api/record/start")).await;
+        let (_, _, html) = get_page(&s, "/api/record/devices").await;
+        assert!(html.contains("<fieldset disabled>"), "{html}");
+        let (status, _, _) = send(&s, form("mic=&output=")).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(
+            Config::load(&s.paths.config_file()).mic.as_deref(),
+            Some("falso:fone-bt")
+        );
+        send(&s, post_to("/api/record/stop")).await;
+        let (status, _, _) = send(&s, form("mic=&output=falso%3Asaida")).await;
+        assert_eq!(status, StatusCode::OK);
+        let config = Config::load(&s.paths.config_file());
+        assert_eq!(config.mic, None);
+        assert_eq!(config.output.as_deref(), Some("falso:saida"));
+    }
+
+    #[tokio::test]
+    async fn seguranca_das_rotas_da_gravacao() {
+        let dir = tempfile::tempdir().unwrap();
+        let (s, _worker, source) = rec_state(&dir, u64::MAX);
+        let no_origin = get("/api/record/start")
+            .method("POST")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(send(&s, no_origin).await.0, StatusCode::FORBIDDEN);
+        let evil = get("/api/record/start")
+            .method("POST")
+            .header(header::ORIGIN, "https://evil.example")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(send(&s, evil).await.0, StatusCode::FORBIDDEN);
+        assert_eq!(source.opens(Track::Mic), 0);
+        assert_eq!(source.opens(Track::System), 0);
+
+        for (method, uri) in [
+            ("POST", "/api/record/start"),
+            ("POST", "/api/record/stop"),
+            ("GET", "/api/record/status"),
+            ("GET", "/api/record/levels"),
+            ("GET", "/api/record/devices"),
+            ("POST", "/api/record/devices"),
+        ] {
+            let req = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header(header::HOST, HOST)
+                .header(header::ORIGIN, ORIGIN)
+                .body(Body::empty())
+                .unwrap();
+            assert_eq!(send(&s, req).await.0, StatusCode::UNAUTHORIZED, "{uri}");
+        }
+        assert_eq!(source.opens(Track::Mic), 0);
+    }
 }

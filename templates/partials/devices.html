@@ -1,0 +1,24 @@
+<form class="record-devices" hx-post="/api/record/devices" hx-trigger="change" hx-target="#ajustes-lista">
+  <fieldset{% if view.recording %} disabled{% endif %}>
+    <legend class="sr-only">Dispositivos da gravação</legend>
+    {%- for select in view.selects %}
+    <div class="record-device">
+      <label for="{{ select.name }}">{{ select.label }}</label>
+      <select id="{{ select.name }}" name="{{ select.name }}" class="device-select">
+        {%- for option in select.options %}
+        <option value="{{ option.id }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
+        {%- endfor %}
+      </select>
+      {%- if select.bluetooth %}
+      <span class="status-badge status-badge-warning">Microfone Bluetooth: a qualidade do som cai durante a gravação.</span>
+      {%- endif %}
+    </div>
+    {%- endfor %}
+  </fieldset>
+  {%- if view.recording %}
+  <p class="record-hint">Os dispositivos mudam depois que esta gravação parar.</p>
+  {%- endif %}
+  {%- if let Some(error) = view.error %}
+  <p class="alert-inline" role="alert">{% include "icons/circle-alert.svg" %}<span>{{ error }}</span></p>
+  {%- endif %}
+</form>

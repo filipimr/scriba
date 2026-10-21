@@ -238,14 +238,24 @@ async fn encerramento_nao_espera_envio_parado() {
     let paths = Paths::resolve(Some(dir.path().into()), Some(dir.path().join("saidas")));
     let pipeline = Arc::new(FakePipeline::new(paths.output_dir.clone()));
     let jobs = Jobs::without_worker(paths.uploads_dir(), pipeline).unwrap();
+    let recorder = scriba::capture::Recorder::new(
+        Arc::new(scriba::capture::FakeSource::new(
+            scriba::capture::fake::Script::tones(),
+        )),
+        paths.recordings_dir(),
+        scriba::capture::Limits::default(),
+    );
     let state = AppState::new(
         "segredo".into(),
         "inst".into(),
         port,
         paths,
         jobs,
-        std::sync::Arc::new(scriba::opener::SystemOpener),
-        std::sync::Arc::new(scriba::dialog::SystemDialog),
+        scriba::web::Desktop {
+            opener: std::sync::Arc::new(scriba::opener::SystemOpener),
+            dialog: std::sync::Arc::new(scriba::dialog::SystemDialog),
+            recorder,
+        },
     );
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(serve(

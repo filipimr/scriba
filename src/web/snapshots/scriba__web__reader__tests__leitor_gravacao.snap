@@ -1,0 +1,107 @@
+---
+source: src/web/reader.rs
+expression: html(&view)
+---
+<article class="transcript-view max-md:p-md" aria-labelledby="transcricao-titulo">
+  <a class="text-link" href="/"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-chevron-left"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m15 18-6-6 6-6" />
+</svg>Recentes</a>
+  <h1 id="transcricao-titulo" class="transcript-title">Gravação de 20/10, 14:30</h1>
+  <p class="transcript-meta">47 min · 312 MB · <span class="transcript-date">20/10/2026 14:30</span></p>
+  <div class="transcript-actions">
+    <button class="btn btn-primary" type="button" data-copiar="texto-transcricao"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-copy"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+</svg>Copiar texto</button>
+    <a class="btn btn-secondary" href="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/transcricao.txt" download="2026-10-20 1430 - Gravação - transcrição.txt"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-download"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 15V3" />
+  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+  <path d="m7 10 5 5 5-5" />
+</svg>Baixar .txt</a>
+    <a class="btn btn-secondary" href="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/transcricao.md" download="2026-10-20 1430 - Gravação - transcrição.md"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-download"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 15V3" />
+  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+  <path d="m7 10 5 5 5-5" />
+</svg>Baixar .md</a>
+    <button class="btn btn-utility" type="button" hx-post="/api/jobs/01JAZ5Y3V8K9M2N4P6Q7R8S9T0/open" hx-swap="none"><!-- @license lucide-static v1.59.0 - ISC -->
+<svg
+  aria-hidden="true"
+  class="lucide lucide-folder-open"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+</svg>Abrir pasta</button>
+  </div>
+  <template id="texto-transcricao">Gravação: Você (microfone) e Outros (som do PC)
+Data: 20/10/2026 14:30
+Duração: 00:47:12
+
+[00:00:00] Outros: Bom dia, pessoal.
+
+[00:00:04] Você: Bom dia &#38; &#60;b&#62;até&#60;/b&#62; já.
+</template>
+  <div class="transcript-text">
+    <p class="transcript-paragraph"><span class="transcript-timestamp">00:00:00</span> <span class="transcript-speaker">Outros:</span> Bom dia, pessoal.</p>
+    <p class="transcript-paragraph"><span class="transcript-timestamp">00:00:04</span> <span class="transcript-speaker">Você:</span> Bom dia &#38; &#60;b&#62;até&#60;/b&#62; já.</p>
+  </div>
+</article>

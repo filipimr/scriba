@@ -94,6 +94,10 @@ pub struct Config {
     pub theme: Theme,
     /// A última pasta escolhida no "Guardar áudio".
     pub audio_dir: Option<PathBuf>,
+    /// O microfone dos Ajustes (id do dispositivo); ausente = o padrão do Windows.
+    pub mic: Option<String>,
+    /// A saída de som gravada; ausente = o padrão do Windows.
+    pub output: Option<String>,
 }
 
 impl Config {
@@ -134,6 +138,8 @@ mod tests {
         let cfg = Config {
             theme: Theme::Dark,
             audio_dir: Some(r"C:\Áudios\Reuniões".into()),
+            mic: Some("{0.0.1.00000000}.{abc}".into()),
+            output: None,
         };
         cfg.save(&path).unwrap();
         assert_eq!(Config::load(&path), cfg);
@@ -153,7 +159,7 @@ mod tests {
             Config::load(&path),
             Config {
                 theme: Theme::Dark,
-                audio_dir: None
+                ..Config::default()
             }
         );
     }
