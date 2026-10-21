@@ -85,7 +85,7 @@ export const test = base.extend<{ scriba: Scriba }>({
     const launch = () => {
       const child = spawn(
         exe(),
-        ["--no-open", "--fake-pipeline", "--fake-audio", "--port", "0", "--data-dir", dataDir, "--output-dir", outputDir],
+        ["--no-open", "--no-tray", "--fake-pipeline", "--fake-audio", "--port", "0", "--data-dir", dataDir, "--output-dir", outputDir],
         { stdio: ["ignore", "pipe", "inherit"] },
       );
       return { child, stdout: collect(child) };

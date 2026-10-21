@@ -2,6 +2,7 @@ mod contrast;
 mod css;
 mod design;
 mod fixtures;
+mod icon;
 mod models;
 
 use std::path::PathBuf;
@@ -37,6 +38,8 @@ enum Cmd {
         #[arg(long)]
         check: bool,
     },
+    /// Gera os .ico do exe e da bandeja em assets/brand/ a partir de docs/brand/*.svg.
+    Icon,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -46,6 +49,7 @@ fn main() -> anyhow::Result<()> {
             fixtures::generate(&root().join("tests").join("fixtures"), only.as_deref())
         }
         Cmd::Css { check } => css::run(&root(), check),
+        Cmd::Icon => icon::run(&root()),
     }
 }
 

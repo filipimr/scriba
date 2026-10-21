@@ -1,3 +1,7 @@
+// A release é um app de janela: aberta pelo Explorer, não mostra console. O debug (`cargo run`,
+// E2E, testes) continua de console, com Ctrl+C.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -15,6 +19,10 @@ struct Cli {
     /// Não abre o navegador ao iniciar.
     #[arg(long)]
     no_open: bool,
+
+    /// Não põe o ícone na bandeja (testes E2E).
+    #[arg(long)]
+    no_tray: bool,
 
     /// Porta local preferida; se estiver ocupada, usa outra livre. 0 = qualquer uma.
     #[arg(long, default_value_t = 47800)]
@@ -41,8 +49,13 @@ struct Cli {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    // `--help`, `--version` e um erro de argumento: o texto vai para o console de quem chamou.
+    let cli = Cli::try_parse().unwrap_or_else(|e| {
+        scriba::console::attach_parent();
+        e.exit()
+    });
     if cli.self_test {
+        scriba::console::attach_parent();
         return match scriba::self_test::run_default() {
             Ok(report) => {
                 println!("self-test ok: {report}");
@@ -57,6 +70,7 @@ fn main() -> ExitCode {
     let opts = Options {
         port: cli.port,
         open_browser: !cli.no_open,
+        tray: !cli.no_tray,
         paths: Paths::resolve(cli.data_dir, cli.output_dir),
         #[cfg(feature = "test-support")]
         fake_pipeline: cli.fake_pipeline,

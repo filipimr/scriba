@@ -54,6 +54,11 @@ required-features = ["test-support"]
 name = "logs"
 required-features = ["test-support"]
 
+# A saída pela rota e pelo fim da sessão, com `--fake-pipeline` e `--fake-audio`.
+[[test]]
+name = "app"
+required-features = ["test-support"]
+
 # A gravação com o `FakeSource` (os testes de hardware usam o cpal).
 [[test]]
 name = "capture"
@@ -79,6 +84,10 @@ ffmpeg-next = { version = "9.0.0", default-features = false, features = ["codec"
 getrandom = "0.4.3"
 hex = "0.4.3"
 hound = "3.5.1"
+# `cargo xtask icon`: os .ico do exe e da bandeja a partir dos SVGs da marca (sem texto: sem
+# fontes).
+ico = "0.6.0"
+resvg = { version = "0.48.1", default-features = false }
 insta = "1.49.0"
 open = "5.4.4"
 proptest = "1.12.0"
@@ -100,9 +109,15 @@ whisper-rs = { version = "0.16.0", features = ["raw-api"] }
 windows = { version = "0.62.2", features = ["Win32_Devices_Properties", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Media_Audio", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Performance", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
 # Hora local e fuso (GetLocalTime/GetSystemTime), a Lixeira (SHFileOperationW), o espaço livre em
 # disco da gravação; os logs (handles padrão, pipes, filtro de falhas nativas, versão do Windows
-# no registro) e a janela do erro fatal; nos testes, o pico de memória do processo.
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Kernel", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+# no registro) e a janela do erro fatal; a bandeja (janela oculta, ícone, menu, fim da sessão), o
+# mutex da instância única e o console das flags de CLI; nos testes, o pico de memória do processo.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_Shutdown", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[build-dependencies]
+# O ícone, a VERSIONINFO e o manifesto do exe (`build.rs`); sem o `toml`, que lê metadados do
+# Cargo.toml que não usamos.
+winresource = { version = "0.1.34", default-features = false }

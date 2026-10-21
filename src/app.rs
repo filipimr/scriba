@@ -1,25 +1,37 @@
-//! Ciclo de vida do app: instância única, servidor local e navegador.
+//! Ciclo de vida do app: instância única, servidor local, bandeja e navegador.
 
 use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
+use std::time::Duration;
 
 use anyhow::Context;
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    IDOK, MB_DEFBUTTON2, MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_SETFOREGROUND,
+    MB_TOPMOST, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MessageBoxW,
+};
 
-use crate::capture::{AudioSource, CpalSource, Limits, Recorder};
+use crate::capture::{AudioSource, CpalSource, Limits, Recorder, Status};
 use crate::config::Paths;
 use crate::dialog::{SaveDialog, SystemDialog};
 use crate::engine::Engine;
-use crate::instance::Instance;
+use crate::instance::{self, Claim, Instance};
 use crate::jobs::{Jobs, Pipeline};
 use crate::logs;
 use crate::opener::{Opener, SystemOpener};
+use crate::shutdown::{Reason, Shutdown};
+use crate::tray::{self, Desk, Pending, Tray};
 use crate::web::{self, AppState, Desktop, SHUTDOWN_GRACE};
+
+/// Quanto a segunda execução espera a primeira responder (ela pode estar abrindo agora).
+const SECOND_RUN_WAIT: Duration = Duration::from_secs(10);
 
 pub struct Options {
     pub port: u16,
     pub open_browser: bool,
+    /// O ícone na bandeja (`--no-tray` o tira, para o E2E; a janela oculta continua).
+    pub tray: bool,
     pub paths: Paths,
     /// O pipeline falso no lugar do real (E2E).
     #[cfg(feature = "test-support")]
@@ -29,29 +41,38 @@ pub struct Options {
     pub fake_audio: bool,
 }
 
-/// Sobe o servidor e bloqueia até Ctrl+C. Se outra instância já responde, só reabre o
-/// navegador nela. Na instância que serve, o stdout e o stderr vão também para o
-/// `scriba.log`; um erro é registrado lá (e, sem ninguém vendo o stderr, mostrado numa
-/// janela) antes de voltar.
+/// Sobe o servidor e bloqueia até o pedido de encerramento (Ctrl+C, "Sair" na bandeja, fim
+/// da sessão do Windows ou `POST /api/app/sair`). Se outra execução já serve a mesma pasta
+/// de dados, só abre o navegador nela. Na instância que serve, o stdout e o stderr vão
+/// também para o `scriba.log`; um erro é registrado lá (e, sem ninguém vendo o stderr,
+/// mostrado numa janela) antes de voltar.
 pub fn run(opts: Options) -> ExitCode {
-    if let Some(existing) = Instance::read(&opts.paths.instance_file()).filter(Instance::is_alive) {
-        announce(
-            "Scriba já está aberto em",
-            &existing.url(),
-            opts.open_browser,
-        );
-        return ExitCode::SUCCESS;
-    }
     let visible = logs::stderr_visible();
+    let _lock = match instance::claim(&opts.paths.data_dir) {
+        Ok(Claim::Mine(lock)) => Some(lock),
+        Ok(Claim::Taken) => return second_run(&opts, visible),
+        Err(e) => {
+            eprintln!("não consegui criar o mutex da instância única: {e}");
+            None
+        }
+    };
     let logs_dir = opts.paths.logs_dir();
     let logs = logs::init(&logs_dir)
         .inspect_err(|e| eprintln!("não consegui abrir o log em {}: {e}", logs_dir.display()))
         .ok();
-    let result = serve(opts);
+    let mut ending = None;
+    let result = serve(opts, &mut ending);
     if let Err(e) = &result {
         eprintln!("erro: {e:#}");
     }
     drop(logs);
+    // Só agora o `WM_ENDSESSION` volta e o Windows pode encerrar o processo.
+    if let Some(Ending { shutdown, tray }) = ending {
+        shutdown.finish();
+        if let Some(tray) = tray {
+            tray.stop();
+        }
+    }
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -66,7 +87,37 @@ pub fn run(opts: Options) -> ExitCode {
     }
 }
 
-fn serve(opts: Options) -> anyhow::Result<()> {
+/// Outra execução tem o mutex desta pasta de dados: espera ela responder e abre o navegador
+/// nela.
+fn second_run(opts: &Options, visible: bool) -> ExitCode {
+    match instance::wait_alive(&opts.paths.instance_file(), SECOND_RUN_WAIT) {
+        Some(existing) => {
+            announce(
+                "Scriba já está aberto em",
+                &existing.url(),
+                opts.open_browser,
+            );
+            ExitCode::SUCCESS
+        }
+        None => {
+            eprintln!("{NOT_RESPONDING}");
+            if !visible {
+                message_box(NOT_RESPONDING, MB_OK | MB_ICONERROR);
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+const NOT_RESPONDING: &str = "O Scriba já está aberto, mas não respondeu.";
+
+/// O que precisa fechar depois dos logs: o fim do `WM_ENDSESSION` e a bandeja.
+struct Ending {
+    shutdown: Shutdown,
+    tray: Option<Tray>,
+}
+
+fn serve(opts: Options, ending: &mut Option<Ending>) -> anyhow::Result<()> {
     let file = opts.paths.instance_file();
     std::fs::create_dir_all(&opts.paths.data_dir)
         .with_context(|| format!("criando {}", opts.paths.data_dir.display()))?;
@@ -102,6 +153,7 @@ fn serve(opts: Options) -> anyhow::Result<()> {
     instance.write(&file)?;
     let opener = opener(&opts);
     let dialog = dialog(&opts);
+    let tray_enabled = opts.tray;
     let state = AppState::new(
         instance.token.clone(),
         instance.id.clone(),
@@ -114,29 +166,45 @@ fn serve(opts: Options) -> anyhow::Result<()> {
             recorder: recorder.clone(),
         },
     );
+    let shutdown = state.shutdown.clone();
+    *ending = Some(Ending {
+        shutdown: shutdown.clone(),
+        tray: start_tray(tray_enabled, &state, &instance.url()),
+    });
     announce("Scriba em", &instance.url(), opts.open_browser);
 
-    let ctrl_c = {
-        let state = state.clone();
-        async move {
-            let _ = tokio::signal::ctrl_c().await;
-            // O SSE dos medidores termina já, sem esperar o prazo do encerramento.
-            state.close();
+    let runtime = tokio::runtime::Runtime::new()?;
+    let result = runtime.block_on(async {
+        {
+            let shutdown = shutdown.clone();
+            tokio::spawn(async move {
+                // Sem console (a release aberta pelo Explorer), nunca dispara.
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    shutdown.request(Reason::CtrlC);
+                }
+            });
         }
-    };
-    let result = tokio::runtime::Runtime::new()?.block_on(web::serve(
-        listener,
-        state,
-        ctrl_c,
-        SHUTDOWN_GRACE,
-    ));
+        let stop = {
+            let (state, recorder) = (state.clone(), recorder.clone());
+            async move {
+                let reason = shutdown.requested().await;
+                eprintln!("encerrando: {}", reason.label());
+                // O SSE dos medidores termina já, sem esperar o prazo do encerramento.
+                state.close();
+                if reason != Reason::EndSession {
+                    return SHUTDOWN_GRACE;
+                }
+                // No logoff, o Windows pode encerrar o processo a qualquer momento: os WAVs
+                // fecham antes de tudo, e o servidor não espera as requisições.
+                let _ = tokio::task::spawn_blocking(move || keep(recorder.finish_on_exit())).await;
+                Duration::ZERO
+            }
+        };
+        web::serve_until(listener, state, stop).await
+    });
+    drop(runtime);
     // Fecha os WAVs antes do worker: a gravação volta na fila na próxima abertura.
-    if let Some(rec) = recorder.finish_on_exit() {
-        eprintln!(
-            "gravação guardada para a próxima abertura: {}",
-            rec.dir.display()
-        );
-    }
+    keep(recorder.finish_on_exit());
     // Também descarta os envios que esperavam a resposta a "Guardar o áudio?".
     if !worker.shutdown(SHUTDOWN_GRACE) {
         eprintln!("o job em andamento não parou a tempo; encerrando mesmo assim");
@@ -146,21 +214,85 @@ fn serve(opts: Options) -> anyhow::Result<()> {
     result.context("servidor")
 }
 
+/// A gravação que o encerramento fechou volta na fila na próxima abertura.
+fn keep(rec: Option<crate::capture::Recording>) {
+    if let Some(rec) = rec {
+        eprintln!(
+            "gravação guardada para a próxima abertura: {}",
+            rec.dir.display()
+        );
+    }
+}
+
+/// A janela oculta e o ícone na bandeja, e a thread que trata os cliques. Sem bandeja (sem
+/// Explorer), o app segue: o erro só vai para o log.
+fn start_tray(icon: bool, state: &AppState, url: &str) -> Option<Tray> {
+    let (events, received) = mpsc::channel();
+    let recording = {
+        let recorder = state.recorder.clone();
+        Arc::new(move || matches!(recorder.status(), Status::Recording { .. }))
+    };
+    let tray = Tray::start(tray::Options {
+        icon,
+        events,
+        recording,
+        shutdown: state.shutdown.clone(),
+    })
+    .inspect_err(|e| eprintln!("bandeja indisponível: {e}"))
+    .ok()?;
+    let state = state.clone();
+    let desk = SystemDesk { url: url.into() };
+    // A confirmação do "Sair" bloqueia esta thread, não a da janela. Ela termina quando a
+    // janela fecha (o canal fecha); se a confirmação estiver aberta, o fim do processo a leva.
+    let spawned = std::thread::Builder::new()
+        .name("scriba-bandeja-acoes".into())
+        .spawn(move || {
+            let pending = || Pending::of(&state.recorder.status(), &state.jobs.list());
+            tray::run(received, &desk, &pending, &state.shutdown);
+        });
+    if let Err(e) = spawned {
+        eprintln!("bandeja indisponível: {e}");
+    }
+    Some(tray)
+}
+
+/// O navegador e a `MessageBox` de verdade.
+struct SystemDesk {
+    url: String,
+}
+
+impl Desk for SystemDesk {
+    fn open(&self) {
+        if let Err(e) = open::that_detached(&self.url) {
+            eprintln!("não consegui abrir o navegador: {e}");
+        }
+    }
+
+    fn confirm(&self, title: &str, text: &str) -> bool {
+        let text = format!("{text}\n\n{}", tray::QUIT_QUESTION);
+        message_box_titled(
+            title,
+            &text,
+            MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST,
+        ) == IDOK
+    }
+}
+
 /// A janela do erro que impediu o app de abrir, quando ninguém vê o stderr (o exe aberto
 /// pelo Explorer).
 fn fatal_dialog(text: &str) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+    message_box(text, MB_OK | MB_ICONERROR);
+}
+
+fn message_box(text: &str, style: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
+    message_box_titled("Scriba", text, style)
+}
+
+fn message_box_titled(title: &str, text: &str, style: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
     let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
-    let (text, title) = (wide(text), wide("Scriba"));
+    let (text, title) = (wide(text), wide(title));
     // SAFETY: as duas strings terminam em zero e vivem durante a chamada.
-    unsafe {
-        MessageBoxW(
-            std::ptr::null_mut(),
-            text.as_ptr(),
-            title.as_ptr(),
-            MB_OK | MB_ICONERROR,
-        )
-    };
+    unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), style) }
 }
 
 /// As gravações que a execução anterior não transcreveu (Ctrl+C, crash) voltam à fila, da

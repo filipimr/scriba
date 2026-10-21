@@ -382,6 +382,20 @@ O arquivo de origem está em `docs/brand/logo-original.jpg`. As versões vetoria
 - **Cores permitidas:** preto sobre fundo claro, ou branco sobre fundo escuro (o quadrado vira branco e a caneta, preta).
 - **Não:** recolorir (nem com o azul de ação), aplicar sombra ou gradiente, distorcer proporções, girar a caneta, contornar o quadrado.
 
+### Ícone do exe e da bandeja
+
+Os `.ico` saem de `cargo xtask icon` a partir dos SVGs de `docs/brand/` e ficam versionados em `assets/brand/`; o `build.rs` os embute no exe. São elementos nativos do Windows, fora dos tokens do YAML.
+
+- **Exe** (`scriba.ico`, de 16 a 256 px): o ícone do app, quadrado preto e caneta branca, que se lê no Explorer claro e no escuro, na barra de tarefas e no Alt+Tab. Até 24 px, a versão simplificada do `logo-16.svg`; de 32 a 64 px, o logo completo com o traço dobrado (4 na grade de 100) para não sumir; acima, o traço original.
+- **Bandeja** (`bandeja-escura.ico` e `bandeja-clara.ico`, de 16 a 48 px): só o glifo, sem o quadrado, como os ícones do sistema na área de notificação. Glifo preto na barra clara, branco na barra escura, trocado na hora em que o tema muda. Até 24 px, a caneta do `logo-16.svg` com o traço um pouco mais grosso (1,6 em vez de 1,25).
+- **Dica:** "Scriba"; durante a gravação, "Scriba — gravando".
+- **Clique** no ícone abre o app no navegador. **Menu** (clique direito): "Abrir o Scriba" (o padrão, em negrito), um separador e "Sair".
+- **Janelas nativas** (`MessageBox`, no estilo do sistema):
+  - "Sair do Scriba?", só quando algo se perde, com um parágrafo por caso: "A gravação em andamento para agora. O que foi gravado será transcrito quando o Scriba abrir de novo.", "A transcrição de X será cancelada." (ou "As N transcrições na fila serão canceladas.") e "O áudio sem resposta será descartado.", e no fim "Sair mesmo assim?". Botões OK e Cancelar, com o Cancelar como padrão.
+  - "O Scriba já está aberto, mas não respondeu." quando a segunda execução não acha a primeira.
+  - "Não consegui abrir o Scriba: … Detalhes em …\logs." no erro fatal.
+  - No logoff ou desligamento com o app fechando, o Windows mostra o motivo "Finalizando a gravação…".
+
 ## Iconografia
 
 - Ícones de linha da biblioteca **Lucide** (licença ISC), embutidos como SVG inline.
@@ -693,6 +707,7 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 - Botões com verbos diretos: "Gravar", "Parar", "Escolher arquivo", "Ver transcrição", "Copiar texto", "Baixar .txt", "Baixar .md", "Abrir pasta", "Tentar de novo", "Excluir", "Guardar áudio", "Descartar", "Mostrar no Explorer".
 - Confirmações curtas, sem ponto: "Texto copiado".
 - Gravação: "Gravando", "Ajustes", "Microfone", "Saída do som", "Padrão do Windows (…)", "(padrão)", "Microfone sem sinal"; avisos para leitores de tela "Gravação iniciada." e "Gravação parada. Transcrevendo."; fim automático "O microfone foi desconectado. A gravação parou e vai ser transcrita.", "A gravação chegou ao limite de 12 h e parou.".
+- Bandeja: "Abrir o Scriba", "Sair", a dica "Scriba — gravando" e a confirmação "Sair do Scriba?" (textos na seção "Ícone do exe e da bandeja").
 - Etapas no gerúndio: "Na fila", "Extraindo áudio…", "Transcrevendo… 42%", "Guardando áudio… 42%", "Cancelando…".
 - Estimativas arredondadas e sem falsa precisão: "Cerca de 4 min na GPU", "Menos de 1 min no processador". "Processador" no lugar de "CPU".
 - Erros dizem o que aconteceu e o que fazer: "Este arquivo não tem áudio. Escolha um vídeo com som." — nunca códigos ou jargão técnico.
@@ -733,9 +748,9 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 ## Lacunas conhecidas
 
-- **Logo vetorial:** resolvido na Fase 2 (SVGs em `docs/brand/`). Falta o `.ico` do executável e da bandeja, que sai na Fase 7 junto com o ícone da bandeja.
+- **Logo vetorial:** resolvido na Fase 2 (SVGs em `docs/brand/`); o `.ico` do executável e os da bandeja saíram na etapa 7.2 (`cargo xtask icon`).
 - **Ilustrações de estado vazio:** a v1 usa apenas ícones Lucide.
-- **Ícone da bandeja do Windows:** precisa de variantes clara e escura, conforme o tema da barra de tarefas.
+- **Ícone da bandeja do Windows:** resolvido na etapa 7.2, com as variantes clara e escura trocadas pelo tema da barra de tarefas, a dica, o menu e as janelas nativas (seção "Ícone do exe e da bandeja"). O menu e as `MessageBox` seguem o estilo do Windows, não os tokens; o contraste do glifo na barra com cor de destaque personalizada não foi conferido.
 - **Card concluído e leitor:** resolvido na etapa 4.5: as ações do card concluído ("Ver transcrição", "Baixar .txt", "Baixar .md", "Abrir pasta") numa linha própria, o `transcript-view` com o "‹ Recentes" e os estados sem fala e de transcrição ausente, o `toast` (também para os erros de ação) e o `button-utility` com 44 px de altura. Resolvidos na 4.4: a dropzone sem as caixinhas, o estilo do "Tentar de novo", o backend no rodapé e a estimativa no card, e o texto do `confirm-dialog`.
 - **Guardar o áudio:** resolvido na Fase 5 com o `audio-prompt` (YAML e prosa): a pergunta no card concluído, os estados escolhendo, guardando e guardado, o "Mostrar no Explorer" e o erro em toast. A janela "Salvar como" é a nativa do Windows, fora do design system. Na Fase 6, a gravação reaproveita o mesmo componente.
 - **Gravação ao vivo:** resolvido na etapa 6.3: os estados do `record-panel` e do `record-button` (gravando, desabilitado, erro, avisos, fim automático), o `level-meter` como `<meter>`, o `device-select` com "Padrão do Windows" e o aviso Bluetooth, a `recording-bar` em todas as páginas, o card de gravação e a confirmação do descarte. O Ctrl+Shift+R não é reservado pelo Edge e ficou como estava.

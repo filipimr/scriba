@@ -13,6 +13,8 @@ sha2.workspace = true
 ureq.workspace = true
 serde_yaml_ng.workspace = true
 hound.workspace = true
+resvg.workspace = true
+ico.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
