@@ -9,6 +9,7 @@ pub mod cleanup;
 pub mod clock;
 pub mod config;
 pub mod console;
+pub mod delay_load;
 pub mod dialog;
 pub mod engine;
 pub mod instance;

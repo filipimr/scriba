@@ -3,13 +3,19 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  # Fora da tag, build, self-test e dumpbin sem publicar nada: no PR que mexe na release e
-  # sob demanda (`gh workflow run release.yml --ref <branch>`).
+  # Fora da tag, o build, os três smokes e o dumpbin sem publicar nada: no PR que mexe na
+  # release e sob demanda (`gh workflow run release.yml --ref <branch>`). O exe vai como
+  # artifact do workflow (o Sandbox da etapa 7.5 o usa).
   pull_request:
     paths:
       - .github/workflows/release.yml
       - .github/actions/setup-native/**
       - crates/scriba-model/**
+      - build.rs
+      - scripts/smoke.ps1
+      - src/delay_load.rs
+      - src/self_test.rs
+      - xtask/src/dist.rs
   workflow_dispatch:
 
 permissions:
@@ -18,14 +24,15 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
-    timeout-minutes: 150
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
       - uses: ./.github/actions/setup-native
         with:
           tools: cargo-about
-          models: small,silero
+          models: large,small,silero
+          vulkan: "true"
 
       - name: Tag confere com a versão do Cargo.toml
         if: startsWith(github.ref, 'refs/tags/')
@@ -37,53 +44,86 @@ jobs:
             throw "tag ${{ github.ref_name }} difere da versão v$version do Cargo.toml"
           }
 
-      # O build script do whisper-rs-sys não rastreia as flags CMAKE_* do .cargo/config.toml:
-      # sem o clean, o rust-cache traria um whisper.cpp compilado com flags antigas.
-      - name: Limpar o whisper.cpp do cache
-        run: cargo clean -p whisper-rs-sys --release
-
-      # O modelo da CPU (small) embutido: o app transcreve no processador e o self-test o
-      # usa. O modelo grande e o Vulkan entram na Fase 7.
-      - name: Build
-        run: cargo build --release --features embedded-cpu-model
-
-      - name: Smoke test
-        shell: pwsh
+      # O mesmo build da máquina de desenvolvimento: Vulkan, o large e o small embutidos, o
+      # SHA-256, as licenças, o dumpbin, a VERSIONINFO e o --self-test (smoke 1). O runner
+      # não tem GPU: o self-test prova o recuo para a CPU. O cache do Cargo já é separado
+      # pelo hash do .cargo/config.toml (setup-native), então o whisper.cpp não é limpo.
+      - name: Build (cargo xtask dist) e --self-test
         env:
+          SCRIBA_SELF_TEST_EXPECT: cpu
           # O small otimizado transcreve a amostra em ~6 s no runner; sem /O2 levaria ~48 s.
           SCRIBA_SELF_TEST_MAX_SECS: "15"
+        run: cargo xtask dist --trust-cache
+
+      # Smoke 2: o app de verdade, pelas rotas (envio, log, segunda instância e saída).
+      - name: Smoke pelas rotas
+        shell: pwsh
         run: |
-          Copy-Item C:\t\release\scriba.exe scriba.exe
-          .\scriba.exe --self-test
+          .\scripts\smoke.ps1 -Exe dist\scriba.exe -Fixtures tests\fixtures -Out "$env:RUNNER_TEMP\smoke"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-      - name: Sem DLLs do FFmpeg
+      # Smoke 3: sem o vulkan-1.dll (uma máquina sem driver de GPU), o exe abre e transcreve
+      # na CPU pelo delay-load.
+      - name: Sem o vulkan-1.dll
+        shell: pwsh
+        env:
+          SCRIBA_SELF_TEST_EXPECT: cpu
+          SCRIBA_SELF_TEST_MAX_SECS: "15"
+        run: |
+          $dll = "$env:SystemRoot\System32\vulkan-1.dll"
+          if (Test-Path $dll) {
+            takeown /f $dll | Out-Null
+            icacls $dll /grant "*S-1-5-32-544:F" | Out-Null
+            Rename-Item $dll "vulkan-1.dll.escondido"
+            Write-Host "vulkan-1.dll renomeado no System32"
+          }
+          $handle = [IntPtr]::Zero
+          if ([System.Runtime.InteropServices.NativeLibrary]::TryLoad("vulkan-1.dll", [ref]$handle)) {
+            throw "o vulkan-1.dll ainda é achado"
+          }
+          $out = .\dist\scriba.exe --self-test | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code) { exit $code }
+          if ($out -notmatch "vulkan-1.dll: ausente") { throw "o self-test não viu a falta do vulkan-1.dll" }
+
+      - name: Tamanhos
+        if: always()
         shell: pwsh
         run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vs = & $vswhere -latest -property installationPath
-          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
-          $deps = & $dumpbin.FullName /dependents scriba.exe
-          $deps
-          if ($deps -match '(?i)\b(av\w+|sw\w+|postproc)-\d+\.dll') { throw "o exe depende de DLLs do FFmpeg" }
+          function Mb($path) {
+            if (-not (Test-Path $path)) { return "ausente" }
+            $bytes = (Get-ChildItem $path -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+            "{0:N0} MB" -f ($bytes / 1MB)
+          }
+          "exe:              $(Mb dist\scriba.exe)"
+          "target (C:\t):    $(Mb C:\t)"
+          "modelos:          $(Mb models)"
+          "FFmpeg (vcpkg):   $(Mb vcpkg_installed)"
+          "Vulkan SDK:       $(Mb C:\VulkanSDK)"
 
-      - name: Checksum e licenças
-        shell: pwsh
-        run: |
-          $hash = (Get-FileHash scriba.exe -Algorithm SHA256).Hash.ToLower()
-          "$hash  scriba.exe" | Out-File -Encoding ascii scriba.exe.sha256
-          cargo about generate about.hbs -o THIRD_PARTY_LICENSES.html
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          name: scriba-exe
+          retention-days: 14
+          path: |
+            dist/scriba.exe
+            dist/scriba.exe.sha256
 
-      - name: Tamanho do exe
-        shell: pwsh
-        run: '"{0:N0} MB" -f ((Get-Item scriba.exe).Length / 1MB)'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke
+          retention-days: 14
+          path: ${{ runner.temp }}/smoke
 
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           generate_release_notes: true
           files: |
-            scriba.exe
-            scriba.exe.sha256
-            THIRD_PARTY_LICENSES.html
+            dist/scriba.exe
+            dist/scriba.exe.sha256
+            dist/THIRD_PARTY_LICENSES.html
             LICENSE

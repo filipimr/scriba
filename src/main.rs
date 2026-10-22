@@ -9,6 +9,18 @@ use clap::Parser;
 use scriba::app::{self, Options};
 use scriba::config::Paths;
 
+/// Os hooks do `delayimp` para o `vulkan-1.dll` (`/DELAYLOAD` no `build.rs`): ficam no exe,
+/// e não na biblioteca, para o linker usá-los no lugar dos padrões do `delayimp.lib`.
+#[cfg(feature = "vulkan")]
+#[unsafe(no_mangle)]
+#[used]
+static __pfnDliFailureHook2: scriba::delay_load::Hook = Some(scriba::delay_load::failure_hook);
+
+#[cfg(feature = "vulkan")]
+#[unsafe(no_mangle)]
+#[used]
+static __pfnDliNotifyHook2: scriba::delay_load::Hook = Some(scriba::delay_load::notify_hook);
+
 #[derive(Parser)]
 #[command(version, about = "Grava e transcreve")]
 struct Cli {

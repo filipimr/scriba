@@ -1,6 +1,7 @@
-//! `scriba --self-test`: prova, no exe de release, que o modelo da CPU e o VAD carregam da
-//! memória, que o pipeline do app (`media` + `asr`) transcreve pt-BR em CPU e que o FFmpeg
-//! estático codifica H.264.
+//! `scriba --self-test`: prova, no exe de release, que os modelos e o VAD carregam da memória,
+//! que o pipeline do app (`media` + `asr`) transcreve pt-BR no backend que o app escolheria
+//! (a GPU dedicada com o large, ou a CPU com o `small`, com o mesmo recuo), que o large
+//! embutido carrega e que o FFmpeg estático codifica H.264.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -13,8 +14,8 @@ use ffmpeg::util::frame;
 use ffmpeg::{Dictionary, Rational, codec, encoder};
 use ffmpeg_next as ffmpeg;
 
-use crate::asr::{Asr, Model, Models, Plan, Source};
-use crate::media;
+use crate::asr::{Asr, Backend, Model, ModelKind, Models, Plan, Source, devices, plans};
+use crate::{delay_load, media};
 
 /// Palavras ditas na amostra `tests/fixtures/fala.wav`.
 const KEYWORDS: &[&str] = &[
@@ -31,11 +32,32 @@ const MIN_HITS: usize = 3;
 /// um whisper.cpp compilado sem otimização leva dezenas de segundos e falha aqui.
 pub const MAX_SECS_VAR: &str = "SCRIBA_SELF_TEST_MAX_SECS";
 
+/// `cpu` ou `gpu`: o backend em que a transcrição precisa rodar. Só o CI e o Sandbox a
+/// definem (no runner sem GPU, prova o recuo para a CPU).
+pub const EXPECT_VAR: &str = "SCRIBA_SELF_TEST_EXPECT";
+
+/// O modelo grande no self-test.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Large {
+    /// Transcreveu a amostra (na GPU).
+    Used,
+    /// Embutido, só carregado (na CPU), no tempo dado.
+    Loaded(Duration),
+    /// Este build não tem o large.
+    Absent,
+}
+
 pub struct Report {
-    /// O modelo que transcreveu: o da CPU (`small`) na release.
+    /// O candidato que transcreveu ("NVIDIA … (Vulkan1), modelo grande, flash attention").
+    pub backend: String,
+    pub gpu: bool,
+    /// `large-v3-turbo`, `small` ou `base`.
     pub model: &'static str,
     pub text: String,
     pub transcribe: Duration,
+    pub large: Large,
+    /// O Windows acha o `vulkan-1.dll`.
+    pub vulkan_dll: bool,
     pub encode: Duration,
     /// Recursos de CPU com que o whisper.cpp foi compilado.
     pub system: &'static str,
@@ -43,39 +65,53 @@ pub struct Report {
 
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let large = match self.large {
+            Large::Used => "usado na transcrição".to_string(),
+            Large::Loaded(d) => format!("carregado em {d:.1?}"),
+            Large::Absent => "não embutido".to_string(),
+        };
+        let dll = if self.vulkan_dll {
+            "presente"
+        } else {
+            "ausente"
+        };
         write!(
             f,
-            "transcrição ({}) {:.1?}, x264 {:.1?} → {}\nwhisper.cpp: {}",
+            "backend: {}\nvulkan-1.dll: {dll}\ntranscrição ({}) {:.1?} → {}\nmodelo grande: {large}\n\
+             x264 {:.1?}\nwhisper.cpp: {}",
+            self.backend,
             self.model,
             self.transcribe,
-            self.encode,
             self.text.trim(),
+            self.encode,
             self.system.trim()
         )
     }
 }
 
-/// Usa o modelo da CPU, o VAD e a amostra embutidos; sem a feature `embedded-cpu-model`,
-/// lê de `models/` (o `small` ou, sem ele, o `base`, como no CI) e de `tests/fixtures/`.
-/// Falha se a transcrição passar do limite de [`MAX_SECS_VAR`], quando definido.
+/// Usa os modelos, o VAD e a amostra embutidos; sem eles, lê de `models/` (o large, se houver,
+/// e o `small` ou, sem ele, o `base`, como no CI) e de `tests/fixtures/`. Falha se a
+/// transcrição passar do limite de [`MAX_SECS_VAR`] ou rodar fora do backend de
+/// [`EXPECT_VAR`], quando definidos.
 pub fn run_default() -> anyhow::Result<Report> {
     let embedded = Models::embedded();
-    let report = match (embedded.cpu, embedded.vad, scriba_model::TEST_SAMPLE) {
-        (Some(model), Some(vad), Some(sample)) => run(model, vad, sample)?,
+    let report = match (embedded.cpu.is_some(), scriba_model::TEST_SAMPLE) {
+        (true, Some(sample)) => run_with(embedded, sample)?,
         _ => {
             let root = Path::new(env!("CARGO_MANIFEST_DIR"));
             let dev = Models::from_dir(&root.join("models"));
-            let (Some(model), Some(vad)) = (dev.cpu, dev.vad) else {
+            if dev.cpu.is_none() || dev.vad.is_none() {
                 bail!("modelos não embutidos: rode `cargo xtask model --only small,silero`");
-            };
+            }
             let sample = std::fs::read(root.join("tests/fixtures/fala.wav"))?;
-            run(model, vad, &sample)?
+            run_with(dev, &sample)?
         }
     };
     check_limit(
         report.transcribe,
         std::env::var(MAX_SECS_VAR).ok().as_deref(),
     )?;
+    check_expect(report.gpu, std::env::var(EXPECT_VAR).ok().as_deref())?;
     Ok(report)
 }
 
@@ -95,9 +131,41 @@ fn check_limit(transcribe: Duration, max_secs: Option<&str>) -> anyhow::Result<(
     Ok(())
 }
 
-/// Transcreve `sample` (qualquer formato que o FFmpeg leia) com `model` na CPU e codifica um
-/// clipe x264.
+fn check_expect(gpu: bool, expect: Option<&str>) -> anyhow::Result<()> {
+    let wanted = match expect {
+        None | Some("") => return Ok(()),
+        Some("gpu") => true,
+        Some("cpu") => false,
+        Some(other) => bail!("{EXPECT_VAR} inválido: {other:?} (use cpu ou gpu)"),
+    };
+    let name = |gpu| if gpu { "na GPU" } else { "na CPU" };
+    ensure!(
+        gpu == wanted,
+        "a transcrição rodou {}, esperado {} ({EXPECT_VAR})",
+        name(gpu),
+        name(wanted)
+    );
+    Ok(())
+}
+
+/// Transcreve `sample` (qualquer formato que o FFmpeg leia) só na CPU, com `model`, e codifica
+/// um clipe x264.
 pub fn run(model: Model, vad: Source, sample: &[u8]) -> anyhow::Result<Report> {
+    let models = Models {
+        large: None,
+        cpu: Some(model),
+        vad: Some(vad),
+    };
+    run_plans(vec![Plan::cpu()], models, sample)
+}
+
+/// Como o app: os candidatos vêm das GPUs detectadas e dos `models` (a GPU dedicada com o
+/// large, depois a CPU).
+pub fn run_with(models: Models, sample: &[u8]) -> anyhow::Result<Report> {
+    run_plans(plans(&devices(), &models), models, sample)
+}
+
+fn run_plans(plans: Vec<Plan>, models: Models, sample: &[u8]) -> anyhow::Result<Report> {
     let input = temp_path("scriba-self-test.wav");
     std::fs::write(&input, sample)?;
     let never = AtomicBool::new(false);
@@ -105,14 +173,8 @@ pub fn run(model: Model, vad: Source, sample: &[u8]) -> anyhow::Result<Report> {
     let _ = std::fs::remove_file(&input);
     let audio = audio?;
 
-    let name = model.name;
-    let models = Models {
-        large: None,
-        cpu: Some(model),
-        vad: Some(vad),
-    };
     let t0 = Instant::now();
-    let transcription = Asr::new(vec![Plan::cpu()], models).transcribe(&audio, |_| {}, &never)?;
+    let transcription = Asr::new(plans, models.clone()).transcribe(&audio, |_| {}, &never)?;
     let transcribe = t0.elapsed();
     let text = transcription
         .segments
@@ -124,6 +186,23 @@ pub fn run(model: Model, vad: Source, sample: &[u8]) -> anyhow::Result<Report> {
     if hits < MIN_HITS {
         bail!("só {hits} de {MIN_HITS} palavras-chave na transcrição: {text:?}");
     }
+    let plan = transcription.plan;
+    let large = if plan.model == ModelKind::Large {
+        Large::Used
+    } else if models.large.is_some() {
+        // Só a carga, na CPU: prova que o large embutido está inteiro.
+        let only_large = Plan {
+            model: ModelKind::Large,
+            ..Plan::cpu()
+        };
+        let t = Instant::now();
+        Asr::new(vec![only_large], models)
+            .preload()
+            .context("o modelo grande não carregou")?;
+        Large::Loaded(t.elapsed())
+    } else {
+        Large::Absent
+    };
 
     let t1 = Instant::now();
     let out = temp_path("scriba-self-test.mp4");
@@ -135,9 +214,13 @@ pub fn run(model: Model, vad: Source, sample: &[u8]) -> anyhow::Result<Report> {
         "clipe x264 com {secs:.2} s, esperado 1 s"
     );
     Ok(Report {
-        model: name,
+        backend: plan.to_string(),
+        gpu: matches!(plan.backend, Backend::Gpu(_)),
+        model: transcription.model,
         text,
         transcribe,
+        large,
+        vulkan_dll: delay_load::vulkan_present(),
         encode: t1.elapsed(),
         system: whisper_rs::print_system_info(),
     })
@@ -236,19 +319,47 @@ mod tests {
 
     #[test]
     fn report_mostra_texto_tempos_e_recursos_da_cpu() {
-        let r = Report {
+        let mut r = Report {
+            backend: "CPU, modelo da CPU".into(),
+            gpu: false,
             model: "small",
             text: " bom dia ".into(),
             transcribe: Duration::from_millis(1500),
+            large: Large::Loaded(Duration::from_millis(2300)),
+            vulkan_dll: false,
             encode: Duration::from_millis(200),
             system: "CPU : AVX2 = 1 | ",
         };
         let s = r.to_string();
-        assert!(
-            s.contains("(small)") && s.contains("bom dia") && s.contains("x264"),
-            "{s}"
-        );
+        for part in [
+            "backend: CPU, modelo da CPU",
+            "vulkan-1.dll: ausente",
+            "(small)",
+            "bom dia",
+            "modelo grande: carregado em 2.3s",
+            "x264",
+        ] {
+            assert!(s.contains(part), "{part}: {s}");
+        }
         assert!(s.ends_with("whisper.cpp: CPU : AVX2 = 1 |"), "{s}");
+        r.large = Large::Used;
+        r.vulkan_dll = true;
+        let s = r.to_string();
+        assert!(s.contains("usado na transcrição") && s.contains("dll: presente"));
+        r.large = Large::Absent;
+        assert!(r.to_string().contains("não embutido"));
+    }
+
+    #[test]
+    fn backend_esperado_so_quando_definido() {
+        assert!(check_expect(false, None).is_ok());
+        assert!(check_expect(true, Some("")).is_ok());
+        assert!(check_expect(false, Some("cpu")).is_ok());
+        assert!(check_expect(true, Some("gpu")).is_ok());
+        let err = check_expect(true, Some("cpu")).unwrap_err().to_string();
+        assert!(err.contains("rodou na GPU, esperado na CPU"), "{err}");
+        assert!(check_expect(false, Some("gpu")).is_err());
+        assert!(check_expect(false, Some("npu")).is_err());
     }
 
     #[test]
