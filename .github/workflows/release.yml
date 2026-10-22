@@ -16,6 +16,7 @@ on:
       - src/delay_load.rs
       - src/self_test.rs
       - xtask/src/dist.rs
+      - Cargo.toml
   workflow_dispatch:
 
 permissions:
@@ -24,7 +25,9 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
-    timeout-minutes: 180
+    # Medido na etapa 7.4: 22 min com os caches frios (o build, 10 min, recompila o whisper.cpp
+    # com Vulkan: o rust-cache poda a saída dele).
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 

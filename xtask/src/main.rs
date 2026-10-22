@@ -5,6 +5,7 @@ mod dist;
 mod fixtures;
 mod icon;
 mod models;
+mod sandbox;
 
 use std::path::PathBuf;
 
@@ -51,6 +52,16 @@ enum Cmd {
         #[arg(long)]
         trust_cache: bool,
     },
+    /// Roda o smoke (scripts/smoke.ps1 -Sandbox) no Windows Sandbox, sem rede e sem GPU, e
+    /// lê o resultado.
+    SandboxTest {
+        /// O exe testado (padrão: dist/scriba.exe).
+        #[arg(long)]
+        exe: Option<PathBuf>,
+        /// Liga a vGPU do Sandbox (só para registrar).
+        #[arg(long)]
+        gpu: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -71,6 +82,7 @@ fn main() -> anyhow::Result<()> {
                 trust_cache,
             },
         ),
+        Cmd::SandboxTest { exe, gpu } => sandbox::run(&root(), &sandbox::Options { exe, gpu }),
     }
 }
 

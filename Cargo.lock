@@ -1765,7 +1765,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scriba"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "askama",
@@ -2687,6 +2687,7 @@ dependencies = [
  "ico",
  "insta",
  "resvg",
+ "serde_json",
  "serde_yaml_ng",
  "sha2",
  "ureq",

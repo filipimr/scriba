@@ -1,8 +1,20 @@
 # Scriba - ambiente de desenvolvimento local (idempotente).
 # Execute em um PowerShell como administrador:  powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 # Depois do build do FFmpeg, -LimparVcpkg apaga os temporarios do vcpkg (buildtrees, downloads, packages).
+# -Sandbox so habilita o Windows Sandbox (cargo xtask sandbox-test) e sai; pede reiniciar o Windows.
 # Sem ErrorActionPreference=Stop: no PowerShell 5.1 ele aborta com qualquer stderr de programa nativo.
-param([switch]$LimparVcpkg)
+param([switch]$LimparVcpkg, [switch]$Sandbox)
+
+# Windows Sandbox (Windows 10/11 Pro, virtualizacao ligada no firmware). Idempotente.
+if ($Sandbox) {
+    $feature = Get-WindowsOptionalFeature -Online -FeatureName 'Containers-DisposableClientVM'
+    if (-not $feature) { Write-Warning 'Este Windows nao tem o Windows Sandbox (precisa do Pro ou Enterprise).'; exit 1 }
+    if ($feature.State -eq 'Enabled') { Write-Host 'ok   Windows Sandbox ja habilitado'; exit 0 }
+    Write-Host 'inst Windows Sandbox'
+    $result = Enable-WindowsOptionalFeature -Online -FeatureName 'Containers-DisposableClientVM' -All -NoRestart
+    if ($result.RestartNeeded) { Write-Warning 'Reinicie o Windows para terminar de habilitar o Windows Sandbox.' }
+    exit 0
+}
 
 # So o compilador x64 e o Windows 11 SDK (~3-4 GB), sem os componentes recomendados.
 $vsComponents = '--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --add Microsoft.VisualStudio.Component.Windows11SDK.26100'

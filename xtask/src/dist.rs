@@ -148,7 +148,7 @@ fn cargo(root: &Path, args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn target_dir(root: &Path) -> PathBuf {
+pub fn target_dir(root: &Path) -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from)
 }
 
