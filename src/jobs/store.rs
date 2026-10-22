@@ -1,6 +1,6 @@
-//! Os jobs em memória, em ordem de criação, e a fila do worker. Até a Fase 7 nada é
-//! persistido: um reinício começa com a lista vazia (as gravações ainda não transcritas
-//! voltam pelo `capture::recover`).
+//! Os jobs em memória, em ordem de criação, e a fila do worker. Na abertura, o histórico
+//! (`history`) recria as transcrições a partir dos `job.json` (`restore`), e as gravações
+//! ainda não transcritas voltam pelo `capture::recover`.
 //!
 //! A mídia de um job (o envio em `uploads/` ou a pasta da gravação) sai ao cancelar, ao
 //! remover e com a resposta a "Guardar o áudio?". Ao fechar o app, os envios saem todos; a
@@ -16,16 +16,20 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread::{self, JoinHandle};
+use std::time::SystemTime;
 
 use tokio::sync::mpsc;
 
 use super::id::JobId;
 use super::model::{
-    Audio, AudioEvent, Event, Failure, Job, Media, Outputs, PANIC_MESSAGE, Probe, Stage, State,
+    AUDIO_TTL, Audio, AudioEvent, Event, Failure, Job, Media, Outputs, PANIC_MESSAGE, Probe, Stage,
+    State,
 };
 use super::pipeline::Pipeline;
 use super::worker::Worker;
 use crate::capture::{Recording, storage};
+use crate::clock::{Clock, SystemClock};
+use crate::transcript;
 
 /// Mensagens para o worker.
 pub(super) enum Msg {
@@ -43,10 +47,15 @@ struct Inner {
     queue: mpsc::UnboundedSender<Msg>,
     stopping: AtomicBool,
     pipeline: Arc<dyn Pipeline>,
+    clock: Arc<dyn Clock>,
+    /// O histórico achou mais transcrições do que mostra.
+    older: AtomicBool,
 }
 
 struct Entry {
     job: Job,
+    /// Quando o worker concluiu o job: conta o prazo do áudio sem resposta.
+    finished: Option<SystemTime>,
     /// Lido pelo pipeline sem pegar o lock.
     cancel: Arc<AtomicBool>,
     /// A gravação do áudio ("Guardar áudio"), numa thread própria, e a flag que a cancela.
@@ -93,7 +102,16 @@ impl Jobs {
     /// Cria a fila e o worker que a processa com `pipeline`. Os arquivos que sobraram em
     /// `uploads` de uma execução anterior são apagados: a fila nasce vazia.
     pub fn start(uploads: PathBuf, pipeline: Arc<dyn Pipeline>) -> io::Result<(Self, Worker)> {
-        let (jobs, rx) = Self::create(uploads, pipeline.clone())?;
+        Self::start_with_clock(uploads, pipeline, Arc::new(SystemClock))
+    }
+
+    /// Como [`start`](Self::start), com outro relógio (testes da expiração do áudio).
+    pub fn start_with_clock(
+        uploads: PathBuf,
+        pipeline: Arc<dyn Pipeline>,
+        clock: Arc<dyn Clock>,
+    ) -> io::Result<(Self, Worker)> {
+        let (jobs, rx) = Self::create(uploads, pipeline.clone(), clock)?;
         let worker = Worker::spawn(jobs.clone(), rx, pipeline);
         Ok((jobs, worker))
     }
@@ -101,12 +119,13 @@ impl Jobs {
     /// Fila sem worker: os jobs ficam "Na fila" (testes da camada web). O pipeline só
     /// atende ao probe e ao rodapé.
     pub fn without_worker(uploads: PathBuf, pipeline: Arc<dyn Pipeline>) -> io::Result<Self> {
-        Ok(Self::create(uploads, pipeline)?.0)
+        Ok(Self::create(uploads, pipeline, Arc::new(SystemClock))?.0)
     }
 
     fn create(
         uploads: PathBuf,
         pipeline: Arc<dyn Pipeline>,
+        clock: Arc<dyn Clock>,
     ) -> io::Result<(Self, mpsc::UnboundedReceiver<Msg>)> {
         clear_uploads(&uploads)?;
         let (queue, rx) = mpsc::unbounded_channel();
@@ -116,8 +135,61 @@ impl Jobs {
             queue,
             stopping: AtomicBool::new(false),
             pipeline,
+            clock,
+            older: AtomicBool::new(false),
         };
         Ok((Self(Arc::new(inner)), rx))
+    }
+
+    /// Recria as transcrições do histórico como jobs concluídos, sem passar pela fila. Um id
+    /// que já está na lista fica de fora. `older`: o histórico tem mais do que estes.
+    pub fn restore(&self, jobs: Vec<Job>, older: bool) {
+        let mut entries = self.write();
+        for job in jobs {
+            if entries.contains_key(&job.id) {
+                eprintln!("histórico: id repetido {} ignorado", job.id);
+                continue;
+            }
+            let entry = Entry {
+                job,
+                finished: None,
+                cancel: Arc::default(),
+                audio: None,
+            };
+            entries.insert(entry.job.id, entry);
+        }
+        self.0.older.store(older, Ordering::Relaxed);
+    }
+
+    /// O histórico tem transcrições mais antigas do que as da lista.
+    pub fn has_older(&self) -> bool {
+        self.0.older.load(Ordering::Relaxed)
+    }
+
+    /// O zelador: o áudio de cada job concluído há [`AUDIO_TTL`] ou mais, ainda sem resposta
+    /// a "Guardar o áudio?", é descartado. A janela aberta ou a gravação do `.m4a` não
+    /// expiram. Devolve quantos expiraram.
+    pub fn expire_audio(&self) -> usize {
+        let now = self.0.clock.now();
+        let mut expired = Vec::new();
+        for entry in self.write().values_mut() {
+            let due = entry
+                .finished
+                .and_then(|t| now.duration_since(t).ok())
+                .is_some_and(|age| age >= AUDIO_TTL);
+            if !due {
+                continue;
+            }
+            if let Ok(state) = entry.job.state.apply(Event::Audio(AudioEvent::Expire)) {
+                entry.job.state = state;
+                expired.push(entry.job.clone());
+            }
+        }
+        for job in &expired {
+            eprintln!("áudio sem resposta descartado depois de 24 h: {}", job.name);
+            discard_input(job);
+        }
+        expired.len()
     }
 
     pub fn uploads_dir(&self) -> &Path {
@@ -144,6 +216,7 @@ impl Jobs {
         let id = job.id;
         let entry = Entry {
             job,
+            finished: None,
             cancel: Arc::default(),
             audio: None,
         };
@@ -268,6 +341,9 @@ impl Jobs {
             return;
         };
         let recording = entry.job.media == Media::Recording;
+        if let State::Done { .. } = state {
+            entry.finished = Some(self.0.clock.now());
+        }
         match &state {
             State::Canceled if !(recording && self.stopping()) => discard_input(&entry.job),
             State::Done { .. } if recording => {
@@ -406,11 +482,18 @@ impl Jobs {
         let event = Event::Audio(AudioEvent::Finished(saved.map(|()| path)));
         if let Ok(state) = entry.job.state.apply(event) {
             if let State::Done {
-                audio: Audio::Saved { .. },
-                ..
-            } = state
+                audio: Audio::Saved { path },
+                outputs,
+            } = &state
             {
                 discard_input(&entry.job);
+                // O histórico mostra o áudio guardado depois de reabrir.
+                if let Err(e) = transcript::set_manifest_audio(&outputs.dir, path) {
+                    eprintln!(
+                        "não consegui registrar o áudio no job.json de {}: {e}",
+                        outputs.dir.display()
+                    );
+                }
             }
             entry.job.state = state;
         }
@@ -519,8 +602,12 @@ fn remove_quietly(path: &Path) {
     let _ = fs::remove_file(path);
 }
 
-/// Apaga a mídia do job: o envio, ou a pasta inteira da gravação.
+/// Apaga a mídia do job: o envio, ou a pasta inteira da gravação. Um job do histórico não
+/// tem mídia.
 fn discard_input(job: &Job) {
+    if job.input.as_os_str().is_empty() {
+        return;
+    }
     match job.media {
         Media::Recording => storage::remove_dir_quietly(&job.input),
         Media::Video | Media::Audio => remove_quietly(&job.input),

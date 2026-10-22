@@ -1032,6 +1032,23 @@ async fn abrir_pasta_chama_o_opener_com_a_pasta_do_job() {
         assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
     }
 }
+
+/// O "Abrir pasta" da linha das transcrições mais antigas abre a pasta das saídas (criada
+/// se ainda não existe).
+#[tokio::test]
+async fn abrir_a_pasta_das_saidas() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, _worker, opener) = recording_state(&dir);
+    let out = dir.path().join("saidas");
+    let (status, _, body) = send(&s, with_origin(Request::post("/api/app/saidas"))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert!(out.is_dir());
+    assert_eq!(*opener.opened.lock().unwrap(), [out]);
+    opener.fail.store(true, Ordering::Relaxed);
+    let (status, _, body) = send(&s, with_origin(Request::post("/api/app/saidas"))).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body, "Não consegui abrir a pasta.");
+}
 // "Guardar o áudio?" -------------------------------------------------------------------
 
 /// Faz o polling do áudio (`?audio=1`) até o 286 e devolve os cabeçalhos e o card.

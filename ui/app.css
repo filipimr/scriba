@@ -619,6 +619,12 @@
     color: var(--color-ink-secondary);
   }
 
+  /* O fim do histórico: as transcrições mais antigas ficam só na pasta. */
+  .older-note {
+    @apply mt-md flex flex-wrap items-center justify-center gap-sm text-center text-callout;
+    color: var(--color-ink-secondary);
+  }
+
   .footer {
     @apply text-footnote;
     padding: var(--spacing-xl);

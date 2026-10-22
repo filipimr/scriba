@@ -5,6 +5,7 @@
 pub mod app;
 pub mod asr;
 pub mod capture;
+pub mod cleanup;
 pub mod clock;
 pub mod config;
 pub mod console;

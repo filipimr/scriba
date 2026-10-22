@@ -130,3 +130,16 @@ for (const scheme of ["light", "dark"] as const) {
     });
   });
 }
+
+test("a transcrição continua na lista depois de reabrir o app", async ({ page, scriba }) => {
+  await page.goto(scriba.url);
+  await transcribe(page, scriba.outputDir, "historico.mp4");
+  await scriba.restart();
+  await page.goto(scriba.url);
+  const job = card(page, "historico.mp4");
+  await expect(job.getByText("Concluído")).toBeVisible();
+  // O áudio não sobrevive ao reinício: a pergunta não volta.
+  await expect(job.getByText("Guardar o áudio?")).toHaveCount(0);
+  await job.getByRole("link", { name: "Ver transcrição" }).click();
+  await expect(page.getByText("Bom dia, esta é uma transcrição simulada.")).toBeVisible();
+});

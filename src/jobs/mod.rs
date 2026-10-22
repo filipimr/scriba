@@ -3,6 +3,7 @@
 
 #[cfg(any(test, feature = "test-support"))]
 mod fake;
+pub mod history;
 mod id;
 mod model;
 mod pipeline;
@@ -13,7 +14,7 @@ mod worker;
 pub use fake::FakePipeline;
 pub use id::{InvalidId, JobId};
 pub use model::{
-    Audio, AudioEvent, Estimate, Event, FORMATS, Failure, Invalid, Job, Media, Outputs,
+    AUDIO_TTL, Audio, AudioEvent, Estimate, Event, FORMATS, Failure, Invalid, Job, Media, Outputs,
     PANIC_MESSAGE, Probe, RECORDING_COST, RECORDING_PREFIX, Stage, State,
 };
 pub use pipeline::{Ctx, Pipeline};

@@ -160,6 +160,22 @@ pub struct Manifest {
     pub model: String,
     pub timings: Timings,
     pub files: Files,
+    /// O `.m4a` do "Guardar áudio", regravado quando ele fica pronto (opcional: o manifesto
+    /// continua v1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<PathBuf>,
+}
+
+/// Regrava o `job.json` da pasta com o áudio guardado, mantendo as outras chaves.
+pub fn set_manifest_audio(dir: &Path, audio: &Path) -> io::Result<()> {
+    let path = dir.join(JOB_FILE);
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path)?).map_err(io::Error::other)?;
+    let Some(map) = json.as_object_mut() else {
+        return Err(io::Error::other("job.json não é um objeto"));
+    };
+    map.insert("audio".into(), serde_json::to_value(audio)?);
+    write_atomic(&path, &serde_json::to_vec_pretty(&json)?)
 }
 
 impl Default for Manifest {
@@ -176,6 +192,7 @@ impl Default for Manifest {
             model: String::new(),
             timings: Timings::default(),
             files: Files::default(),
+            audio: None,
         }
     }
 }

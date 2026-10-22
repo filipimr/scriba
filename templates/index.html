@@ -46,5 +46,12 @@
     {% include "icons/inbox.svg" %}
     <p>Nada por aqui ainda. Grave uma reunião ou envie um arquivo.</p>
   </div>
+  {%- if let Some(older) = older %}
+  <div class="older-note">
+    <p>As mais antigas continuam em {{ older }}.</p>
+    <button class="btn btn-utility" type="button" hx-post="/api/app/saidas" hx-swap="none" aria-label="Abrir a pasta {{ older }}">
+      {%- include "icons/folder-open.svg" %}Abrir pasta</button>
+  </div>
+  {%- endif %}
 </section>
 {% endblock %}

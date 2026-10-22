@@ -106,7 +106,12 @@ pub struct AudioView {
     pub pct: Option<u8>,
     /// O caminho do áudio guardado.
     pub saved: Option<String>,
+    /// A pergunta ficou 24 h sem resposta.
+    pub expired: bool,
 }
+
+/// O card do job cujo áudio expirou.
+pub const EXPIRED_TEXT: &str = "O áudio foi descartado depois de 24 h sem resposta.";
 
 impl AudioView {
     fn new(audio: &Audio) -> Self {
@@ -136,13 +141,17 @@ impl AudioView {
                 saved: Some(path.display().to_string()),
                 ..Self::default()
             },
+            Audio::Expired => Self {
+                expired: true,
+                ..Self::default()
+            },
             Audio::Discarded => Self::default(),
         }
     }
 
     /// Há algo a mostrar.
     pub fn visible(&self) -> bool {
-        self.ask || self.stage.is_some() || self.saved.is_some()
+        self.ask || self.stage.is_some() || self.saved.is_some() || self.expired
     }
 }
 
@@ -793,6 +802,7 @@ mod tests {
                 }),
             ),
             ("audio_descartado", done(Audio::Discarded)),
+            ("audio_expirado", done(Audio::Expired)),
             (
                 "falhou",
                 JobState::Failed {

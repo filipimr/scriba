@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "id": "01JA0000000000000000000002",
+  "name": "Reunião de equipe.mp3",
+  "media": "audio",
+  "size_bytes": 4800000,
+  "duration_ms": 1800000,
+  "created": "2026-10-18T09:00:00-03:00",
+  "backend": "gpu",
+  "model": "large-v3-turbo",
+  "timings": {
+    "extract_ms": 900,
+    "transcribe_ms": 60000,
+    "total_ms": 61000
+  },
+  "files": {
+    "txt": "transcricao.txt",
+    "md": "transcricao.md"
+  }
+}

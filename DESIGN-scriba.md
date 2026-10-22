@@ -348,6 +348,10 @@ components:
     textColor: "{colors.ink-secondary}"
     typography: "{typography.callout}"
     padding: 64px
+  older-note:
+    backgroundColor: transparent
+    textColor: "{colors.ink-secondary}"
+    typography: "{typography.callout}"
   footer:
     backgroundColor: "{colors.canvas-parchment}"
     textColor: "{colors.ink-secondary}"
@@ -622,7 +626,8 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 - **Escolhendo:** "Escolhendo onde guardar…" enquanto a janela "Salvar como" do Windows está aberta. Cancelar a janela volta à pergunta.
 - **Guardando:** "Guardando áudio… 42%" com a `{component.progress-bar}`; depois do pedido de cancelar, "Cancelando…". Cancelar volta à pergunta.
 - **Guardado:** "Áudio guardado em C:\…\2026-10-20 1430 - Reunião.m4a" (o caminho quebra em qualquer ponto) e o `{component.button-utility}` "Mostrar no Explorer" (ícone folder-search), que abre a pasta com o arquivo selecionado.
-- **Descartado:** o bloco some e o card volta a ter só as ações do resultado.
+- **Descartado:** o bloco some e o card volta a ter só as ações do resultado. Também é assim numa transcrição do histórico (reaberta de um `job.json`) sem áudio guardado.
+- **Expirado:** a pergunta ficou 24 h sem resposta e o áudio foi descartado: só o texto "O áudio foi descartado depois de 24 h sem resposta.", sem botões.
 - **Erro:** a mensagem vem num `{component.toast}` ("Não consegui guardar o áudio. Confira o espaço livre e se a pasta permite gravação, e tente de novo.") e a pergunta volta, para tentar de novo ou descartar.
 
 **`progress-bar`** — Trilho de 4 px em `{colors.divider-soft}`, preenchimento `{colors.primary}`, pílula. É o elemento nativo `<progress>`, que já expõe o papel `progressbar` e o valor; a política de segurança do app (CSP) bloqueia a largura por `style` inline.
@@ -690,6 +695,8 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 
 **`empty-state`** — Lista "Recentes" sem itens: ícone de 24 px e texto em `{typography.callout}` `{colors.ink-secondary}` ("Nada por aqui ainda. Grave uma reunião ou envie um arquivo."), padding 64 px.
 
+**`older-note`** — O fim da lista "Recentes" quando o histórico tem mais de 50 transcrições: "As mais antigas continuam em Documentos\Scriba." em `{typography.callout}` `{colors.ink-secondary}`, centralizado, com o `{component.button-utility}` "Abrir pasta" (ícone folder-open) ao lado, que abre a pasta das saídas. A linha quebra quando não cabe.
+
 **`footer`** — Parchment, `{typography.footnote}` em `{colors.ink-secondary}`: versão do app e onde a transcrição roda ("Scriba 0.1.0 · Transcrição na GPU: NVIDIA GeForce RTX 3050" ou "· Transcrição no processador"), "Funciona offline · nada sai do seu computador", e link para a pasta de saídas.
 
 ## Acessibilidade
@@ -707,6 +714,7 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 - Botões com verbos diretos: "Gravar", "Parar", "Escolher arquivo", "Ver transcrição", "Copiar texto", "Baixar .txt", "Baixar .md", "Abrir pasta", "Tentar de novo", "Excluir", "Guardar áudio", "Descartar", "Mostrar no Explorer".
 - Confirmações curtas, sem ponto: "Texto copiado".
 - Gravação: "Gravando", "Ajustes", "Microfone", "Saída do som", "Padrão do Windows (…)", "(padrão)", "Microfone sem sinal"; avisos para leitores de tela "Gravação iniciada." e "Gravação parada. Transcrevendo."; fim automático "O microfone foi desconectado. A gravação parou e vai ser transcrita.", "A gravação chegou ao limite de 12 h e parou.".
+- Histórico e prazo do áudio: "As mais antigas continuam em Documentos\Scriba." e "O áudio foi descartado depois de 24 h sem resposta.".
 - Bandeja: "Abrir o Scriba", "Sair", a dica "Scriba — gravando" e a confirmação "Sair do Scriba?" (textos na seção "Ícone do exe e da bandeja").
 - Etapas no gerúndio: "Na fila", "Extraindo áudio…", "Transcrevendo… 42%", "Guardando áudio… 42%", "Cancelando…".
 - Estimativas arredondadas e sem falsa precisão: "Cerca de 4 min na GPU", "Menos de 1 min no processador". "Processador" no lugar de "CPU".
@@ -752,7 +760,7 @@ A hierarquia vem da troca de superfície (parchment → branco, claro → escuro
 - **Ilustrações de estado vazio:** a v1 usa apenas ícones Lucide.
 - **Ícone da bandeja do Windows:** resolvido na etapa 7.2, com as variantes clara e escura trocadas pelo tema da barra de tarefas, a dica, o menu e as janelas nativas (seção "Ícone do exe e da bandeja"). O menu e as `MessageBox` seguem o estilo do Windows, não os tokens; o contraste do glifo na barra com cor de destaque personalizada não foi conferido.
 - **Card concluído e leitor:** resolvido na etapa 4.5: as ações do card concluído ("Ver transcrição", "Baixar .txt", "Baixar .md", "Abrir pasta") numa linha própria, o `transcript-view` com o "‹ Recentes" e os estados sem fala e de transcrição ausente, o `toast` (também para os erros de ação) e o `button-utility` com 44 px de altura. Resolvidos na 4.4: a dropzone sem as caixinhas, o estilo do "Tentar de novo", o backend no rodapé e a estimativa no card, e o texto do `confirm-dialog`.
-- **Guardar o áudio:** resolvido na Fase 5 com o `audio-prompt` (YAML e prosa): a pergunta no card concluído, os estados escolhendo, guardando e guardado, o "Mostrar no Explorer" e o erro em toast. A janela "Salvar como" é a nativa do Windows, fora do design system. Na Fase 6, a gravação reaproveita o mesmo componente.
+- **Guardar o áudio:** resolvido na Fase 5 com o `audio-prompt` (YAML e prosa): a pergunta no card concluído, os estados escolhendo, guardando e guardado, o "Mostrar no Explorer" e o erro em toast. A janela "Salvar como" é a nativa do Windows, fora do design system. Na Fase 6, a gravação reaproveita o mesmo componente. Na etapa 7.3, o estado expirado (24 h sem resposta) e a `older-note` no fim do histórico.
 - **Gravação ao vivo:** resolvido na etapa 6.3: os estados do `record-panel` e do `record-button` (gravando, desabilitado, erro, avisos, fim automático), o `level-meter` como `<meter>`, o `device-select` com "Padrão do Windows" e o aviso Bluetooth, a `recording-bar` em todas as páginas, o card de gravação e a confirmação do descarte. O Ctrl+Shift+R não é reservado pelo Edge e ficou como estava.
 - **Abas do `app-header`:** removidas na Fase 6 (uma tela só, com o painel e a dropzone lado a lado); o "Sair" também saiu, porque o app não tem login. Se uma segunda tela aparecer, as abas voltam a ser desenhadas.
 - **Link para a pasta de saídas no rodapé:** descrito em `footer`, ainda não implementado; o "Abrir pasta" de cada job cobre o caso por enquanto.
