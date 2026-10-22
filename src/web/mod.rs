@@ -18,6 +18,7 @@ use axum::Router;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::middleware::from_fn_with_state;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 
 use crate::capture::Recorder;
@@ -154,6 +155,7 @@ pub fn router(state: AppState) -> Router {
             get(record::devices).post(record::choose),
         )
         .route("/api/app/sair", post(quit))
+        .route("/api/app/saidas", post(open_outputs))
         .route("/jobs/{id}", get(reader::page))
         .route("/health", get(pages::health))
         .route("/assets/{*path}", get(assets::serve))
@@ -166,6 +168,31 @@ pub fn router(state: AppState) -> Router {
 async fn quit(State(state): State<AppState>) -> StatusCode {
     state.shutdown.request(Reason::Route);
     StatusCode::NO_CONTENT
+}
+
+/// `POST /api/app/saidas`: o "Abrir pasta" da linha das transcrições mais antigas abre a
+/// pasta das saídas.
+async fn open_outputs(State(state): State<AppState>) -> Response {
+    let dir = state.paths.output_dir.clone();
+    let opener = state.opener.clone();
+    let opened = tokio::task::spawn_blocking(move || {
+        std::fs::create_dir_all(&dir)?;
+        opener.open(&dir)
+    })
+    .await;
+    match opened {
+        Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
+        result => {
+            if let Ok(Err(e)) = result {
+                eprintln!("não consegui abrir a pasta das saídas: {e}");
+            }
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Não consegui abrir a pasta.",
+            )
+                .into_response()
+        }
+    }
 }
 
 /// Abre a porta preferida em 127.0.0.1; se estiver ocupada, uma porta livre qualquer.

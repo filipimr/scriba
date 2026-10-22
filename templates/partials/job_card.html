@@ -44,6 +44,9 @@
       {%- if let Some(pct) = done.audio.pct %}
       <progress class="progress-bar" max="100" value="{{ pct }}" aria-label="Áudio de {{ job.name }}"></progress>
       {%- endif %}
+      {%- if done.audio.expired %}
+      <p class="audio-prompt-text">{{ crate::web::jobs::EXPIRED_TEXT }}</p>
+      {%- endif %}
       {%- if let Some(saved) = done.audio.saved %}
       <p class="audio-prompt-text">Áudio guardado em <span class="audio-prompt-path">{{ saved }}</span></p>
       <div class="audio-prompt-actions">

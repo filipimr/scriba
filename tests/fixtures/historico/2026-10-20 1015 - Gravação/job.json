@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "id": "01JA0000000000000000000004",
+  "name": "Gravação de 20/10, 10:15",
+  "media": "recording",
+  "size_bytes": 11520088,
+  "duration_ms": 90000,
+  "created": "2026-10-20T10:15:00-03:00",
+  "backend": "gpu",
+  "model": "large-v3-turbo",
+  "timings": {
+    "extract_ms": 200,
+    "transcribe_ms": 9000,
+    "total_ms": 9300
+  },
+  "files": {
+    "txt": "transcricao.txt",
+    "md": "transcricao.md"
+  }
+}

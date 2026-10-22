@@ -145,11 +145,19 @@ pub enum Audio {
         path: PathBuf,
     },
     Discarded,
+    /// A pergunta ficou 24 h sem resposta ([`AUDIO_TTL`]) e o áudio foi descartado.
+    Expired,
 }
+
+/// Quanto o áudio de um job concluído espera a resposta a "Guardar o áudio?": como app de
+/// bandeja, o Scriba fica aberto por semanas.
+pub const AUDIO_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AudioEvent {
     Discard,
+    /// O zelador: a pergunta passou de [`AUDIO_TTL`] sem resposta.
+    Expire,
     /// "Guardar áudio": a janela abre.
     Choose,
     /// A janela fechou: o arquivo escolhido, ou `None` se o usuário cancelou.
@@ -166,9 +174,11 @@ impl Audio {
     pub const PENDING: Self = Self::Pending { error: None };
 
     pub fn apply(&self, event: AudioEvent) -> Result<Self, Invalid> {
-        use Audio::{Choosing, Discarded, Pending, Saved, Saving};
+        use Audio::{Choosing, Discarded, Expired, Pending, Saved, Saving};
         match (self, event) {
             (Pending { .. }, AudioEvent::Discard) => Ok(Discarded),
+            // Só a pergunta parada expira: a janela aberta ou a gravação seguem.
+            (Pending { .. }, AudioEvent::Expire) => Ok(Expired),
             (Pending { .. }, AudioEvent::Choose) => Ok(Choosing),
             (Choosing, AudioEvent::Chosen(None)) => Ok(Self::PENDING),
             (Choosing, AudioEvent::Chosen(Some(_))) => Ok(Saving {
@@ -212,7 +222,7 @@ impl Audio {
 
     /// Respondida: o envio já foi apagado.
     pub fn answered(&self) -> bool {
-        matches!(self, Self::Saved { .. } | Self::Discarded)
+        matches!(self, Self::Saved { .. } | Self::Discarded | Self::Expired)
     }
 }
 
@@ -508,6 +518,9 @@ mod tests {
         };
         let cases = [
             (Audio::PENDING, AudioEvent::Discard, Audio::Discarded),
+            (Audio::PENDING, AudioEvent::Expire, Audio::Expired),
+            (failed(), AudioEvent::Expire, Audio::Expired),
+            (Audio::Expired, AudioEvent::Cancel, Audio::Expired),
             (Audio::PENDING, AudioEvent::Choose, Audio::Choosing),
             (failed(), AudioEvent::Choose, Audio::Choosing),
             (Audio::Choosing, AudioEvent::Chosen(None), Audio::PENDING),
@@ -584,6 +597,19 @@ mod tests {
         }
         assert!(Audio::Choosing.busy() && saving(true).busy() && !Audio::PENDING.busy());
         assert!(Audio::Discarded.answered() && !failed().answered());
+        assert!(Audio::Expired.answered() && !Audio::Expired.busy());
+        for audio in [
+            Audio::Choosing,
+            saving(false),
+            Audio::Discarded,
+            Audio::Expired,
+            Audio::Saved { path: path() },
+        ] {
+            assert_eq!(audio.apply(AudioEvent::Expire), Err(Invalid), "{audio:?}");
+        }
+        for event in [AudioEvent::Choose, AudioEvent::Discard] {
+            assert_eq!(Audio::Expired.apply(event), Err(Invalid));
+        }
     }
 
     #[test]
@@ -616,6 +642,7 @@ mod tests {
     fn audio_event() -> impl Strategy<Value = AudioEvent> {
         prop_oneof![
             Just(AudioEvent::Discard),
+            Just(AudioEvent::Expire),
             Just(AudioEvent::Choose),
             Just(AudioEvent::Chosen(None)),
             Just(AudioEvent::Chosen(Some("a.m4a".into()))),

@@ -13,10 +13,13 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::capture::{AudioSource, CpalSource, Limits, Recorder, Status};
-use crate::config::Paths;
+use crate::cleanup;
+use crate::clock::SystemClock;
+use crate::config::{Config, Paths};
 use crate::dialog::{SaveDialog, SystemDialog};
 use crate::engine::Engine;
 use crate::instance::{self, Claim, Instance};
+use crate::jobs::history;
 use crate::jobs::{Jobs, Pipeline};
 use crate::logs;
 use crate::opener::{Opener, SystemOpener};
@@ -135,6 +138,7 @@ fn serve(opts: Options, ending: &mut Option<Ending>) -> anyhow::Result<()> {
         jobs.backend()
             .unwrap_or_else(|| "sem modelo de transcrição".into())
     );
+    restore_history(&jobs, &opts.paths);
     resume_recordings(&jobs, &opts.paths.recordings_dir());
     let recorder = Recorder::new(
         audio_source(&opts),
@@ -181,6 +185,17 @@ fn serve(opts: Options, ending: &mut Option<Ending>) -> anyhow::Result<()> {
                 // Sem console (a release aberta pelo Explorer), nunca dispara.
                 if tokio::signal::ctrl_c().await.is_ok() {
                     shutdown.request(Reason::CtrlC);
+                }
+            });
+        }
+        {
+            // O zelador: o áudio sem resposta há 24 h é descartado.
+            let jobs = state.jobs.clone();
+            tokio::spawn(async move {
+                let mut every = tokio::time::interval(JANITOR_EVERY);
+                loop {
+                    every.tick().await;
+                    jobs.expire_audio();
                 }
             });
         }
@@ -293,6 +308,29 @@ fn message_box_titled(title: &str, text: &str, style: MESSAGEBOX_STYLE) -> MESSA
     let (text, title) = (wide(text), wide(title));
     // SAFETY: as duas strings terminam em zero e vivem durante a chamada.
     unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), style) }
+}
+
+/// De quanto em quanto tempo o zelador procura o áudio sem resposta há 24 h.
+const JANITOR_EVERY: Duration = Duration::from_secs(10 * 60);
+
+/// As transcrições de `output_dir` voltam à lista (as 50 mais recentes), e os temporários
+/// antigos são apagados: os do `--self-test` e os `.m4a.parte` nas pastas do histórico e na
+/// última pasta do "Guardar áudio".
+pub fn restore_history(jobs: &Jobs, paths: &Paths) {
+    let history = history::load(&paths.output_dir, history::LIMIT);
+    eprintln!(
+        "histórico: {} transcrição(ões) na lista{}",
+        history.jobs.len(),
+        if history.older {
+            ", e mais antigas na pasta"
+        } else {
+            ""
+        }
+    );
+    let mut audio_dirs = history.dirs;
+    audio_dirs.extend(Config::load(&paths.config_file()).audio_dir);
+    jobs.restore(history.jobs, history.older);
+    cleanup::run(&SystemClock, &std::env::temp_dir(), &audio_dirs);
 }
 
 /// As gravações que a execução anterior não transcreveu (Ctrl+C, crash) voltam à fila, da

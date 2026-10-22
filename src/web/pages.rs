@@ -49,6 +49,8 @@ struct IndexPage {
     panel: PanelView,
     accept: String,
     format_error: String,
+    /// "As mais antigas continuam em …": o histórico tem mais do que a lista.
+    older: Option<String>,
 }
 
 #[derive(Template)]
@@ -73,6 +75,7 @@ pub async fn index(State(state): State<AppState>) -> Response {
         panel: PanelView::new(&state.recorder.status(), false, None),
         accept: jobs::accept(),
         format_error: jobs::format_error(),
+        older: state.jobs.has_older().then(|| state.paths.output_label()),
     })
 }
 

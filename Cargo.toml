@@ -59,6 +59,11 @@ required-features = ["test-support"]
 name = "app"
 required-features = ["test-support"]
 
+# O histórico com o `FakePipeline`, o `ScriptedDialog` e o `PrintOpener`.
+[[test]]
+name = "historico"
+required-features = ["test-support"]
+
 # A gravação com o `FakeSource` (os testes de hardware usam o cpal).
 [[test]]
 name = "capture"

@@ -197,6 +197,15 @@ fn grava_os_tres_arquivos() {
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
     assert_eq!(names.len(), 3, "sobrou temporário: {names:?}");
+    assert!(json_has_no_audio(&w.manifest));
+
+    // O "Guardar áudio" regrava o manifesto com o arquivo, sem perder o resto.
+    let m4a = std::path::Path::new(r"C:\Áudios\Reunião.m4a");
+    set_manifest_audio(&w.dir, m4a).unwrap();
+    let back: Manifest = serde_json::from_slice(&std::fs::read(&w.manifest).unwrap()).unwrap();
+    assert_eq!(back.audio.as_deref(), Some(m4a));
+    assert_eq!((back.id.as_str(), back.version), (manifest.id.as_str(), 1));
+    assert!(set_manifest_audio(&tmp.path().join("sumiu"), m4a).is_err());
 
     let again = write(tmp.path(), &t, &manifest).unwrap();
     assert!(
@@ -509,4 +518,10 @@ proptest! {
         prop_assert_eq!(texts, expected);
         prop_assert!(parsed.blocks.iter().all(|b| b.speaker.is_none()));
     }
+}
+
+/// O manifesto sem áudio guardado não tem a chave `audio`.
+fn json_has_no_audio(path: &std::path::Path) -> bool {
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    json.get("audio").is_none()
 }

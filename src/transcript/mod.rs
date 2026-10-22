@@ -13,7 +13,7 @@ mod output;
 
 pub use output::{
     Files, JOB_FILE, MANIFEST_VERSION, MD_FILE, Manifest, MediaKind, TXT_FILE, Timings, Written,
-    clean_name, create_unique_dir, folder_name, write, write_atomic,
+    clean_name, create_unique_dir, folder_name, set_manifest_audio, write, write_atomic,
 };
 
 use crate::clock::LocalTime;

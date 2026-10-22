@@ -11,6 +11,7 @@ const CONTEXT_BACKGROUND: &[(&str, &str)] = &[
     ("transcript-timestamp", "canvas"),
     ("transcript-speaker", "canvas"),
     ("empty-state", "canvas-parchment"),
+    ("older-note", "canvas-parchment"),
 ];
 
 pub struct Pair {

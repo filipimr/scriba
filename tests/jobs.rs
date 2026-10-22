@@ -747,3 +747,65 @@ fn gravacoes_retomadas_ao_abrir() {
     assert!(!old.dir.exists() && !new.dir.exists());
     assert_eq!(scriba::app::resume_recordings(&jobs, &root), 0);
 }
+
+/// O áudio sem resposta expira em 24 h: 23 h 59 min fica, 24 h sai (o envio e a pasta da
+/// gravação são apagados); a janela aberta e o que já foi respondido não expiram.
+#[cfg(feature = "test-support")]
+#[test]
+fn audio_sem_resposta_expira_em_24_h() {
+    use scriba::clock::FakeClock;
+    use scriba::jobs::AUDIO_TTL;
+
+    let dir = tempfile::tempdir().unwrap();
+    let pipeline = Arc::new(TestPipeline {
+        out: dir.path().join("saidas"),
+        runs: AtomicUsize::new(0),
+        failed: Mutex::default(),
+    });
+    let clock = Arc::new(FakeClock::new(std::time::SystemTime::now()));
+    let (jobs, worker) =
+        Jobs::start_with_clock(dir.path().join("uploads"), pipeline, clock.clone()).unwrap();
+
+    let upload = finished(&jobs, "reuniao.wav");
+    let rec = recording(&dir.path().join("gravacoes"));
+    let rec = wait_for(&jobs, jobs.submit_recording(rec), "gravação", done);
+    let answered = finished(&jobs, "respondido.wav");
+    jobs.discard_audio(answered.id).unwrap();
+    // A janela "Salvar como" fica aberta até o teste soltar.
+    let choosing = finished(&jobs, "escolhendo.wav");
+    let (release, wait) = std::sync::mpsc::channel::<()>();
+    jobs.save_audio(choosing.id, move |_, _| {
+        let _ = wait.recv();
+        Ok(None)
+    })
+    .unwrap();
+
+    clock.advance(AUDIO_TTL - Duration::from_secs(60));
+    assert_eq!(jobs.expire_audio(), 0);
+    assert!(upload.input.exists() && rec.input.is_dir());
+
+    clock.advance(Duration::from_secs(60));
+    assert_eq!(jobs.expire_audio(), 2);
+    for job in [&upload, &rec] {
+        assert_eq!(audio(&jobs.get(job.id).unwrap()), Audio::Expired);
+        assert!(!job.input.exists(), "{}", job.name);
+    }
+    assert_eq!(audio(&jobs.get(answered.id).unwrap()), Audio::Discarded);
+    assert_eq!(audio(&jobs.get(choosing.id).unwrap()), Audio::Choosing);
+    assert_eq!(
+        jobs.discard_audio(upload.id).unwrap_err(),
+        AudioError::Answered
+    );
+    // Uma segunda passada não acha mais nada.
+    assert_eq!(jobs.expire_audio(), 0);
+
+    // A janela fecha sem escolha: a pergunta volta, e a próxima passada a expira (o prazo
+    // conta do fim da transcrição).
+    release.send(()).unwrap();
+    wait_audio(&jobs, choosing.id, "janela fechada", |a| {
+        *a == Audio::PENDING
+    });
+    assert_eq!(jobs.expire_audio(), 1);
+    assert!(!choosing.input.exists());
+    assert!(worker.shutdown(Duration::from_secs(5)));
+}
