@@ -7,6 +7,9 @@ param([switch]$LimparVcpkg, [switch]$Sandbox)
 
 # Windows Sandbox (Windows 10/11 Pro, virtualizacao ligada no firmware). Idempotente.
 if ($Sandbox) {
+    # Sem elevacao o Get-WindowsOptionalFeature falha, e a falha parecia "sem Sandbox".
+    $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $admin) { Write-Warning 'Rode num PowerShell como administrador (botao direito > Executar como administrador).'; exit 1 }
     $feature = Get-WindowsOptionalFeature -Online -FeatureName 'Containers-DisposableClientVM'
     if (-not $feature) { Write-Warning 'Este Windows nao tem o Windows Sandbox (precisa do Pro ou Enterprise).'; exit 1 }
     if ($feature.State -eq 'Enabled') { Write-Host 'ok   Windows Sandbox ja habilitado'; exit 0 }

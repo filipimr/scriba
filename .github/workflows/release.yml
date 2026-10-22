@@ -54,8 +54,9 @@ jobs:
       - name: Build (cargo xtask dist) e --self-test
         env:
           SCRIBA_SELF_TEST_EXPECT: cpu
-          # O small otimizado transcreve a amostra em ~6 s no runner; sem /O2 levaria ~48 s.
-          SCRIBA_SELF_TEST_MAX_SECS: "15"
+          # O small otimizado transcreve a amostra em 6 a 12 s no runner (já passou de 15 s uma
+          # vez); sem /O2 levaria ~48 s.
+          SCRIBA_SELF_TEST_MAX_SECS: "30"
         run: cargo xtask dist --trust-cache
 
       # Smoke 2: o app de verdade, pelas rotas (envio, log, segunda instância e saída).
@@ -71,7 +72,7 @@ jobs:
         shell: pwsh
         env:
           SCRIBA_SELF_TEST_EXPECT: cpu
-          SCRIBA_SELF_TEST_MAX_SECS: "15"
+          SCRIBA_SELF_TEST_MAX_SECS: "30"
         run: |
           $dll = "$env:SystemRoot\System32\vulkan-1.dll"
           if (Test-Path $dll) {
