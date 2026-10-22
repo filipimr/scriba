@@ -29,7 +29,7 @@ jobs:
     # com Vulkan: o rust-cache poda a saída dele).
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup-native
         with:
