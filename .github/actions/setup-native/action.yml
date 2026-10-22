@@ -12,6 +12,11 @@ inputs:
     description: >
       Modelos para models/, como no `cargo xtask model --only` (vírgulas); vazio não baixa.
     default: "base,silero"
+  vulkan:
+    description: >
+      Instala o Vulkan SDK (o mesmo da máquina de desenvolvimento), com cache por versão, e
+      define o VULKAN_SDK: o build com a feature `vulkan` (release completa).
+    default: "false"
 
 runs:
   using: composite
@@ -55,10 +60,47 @@ runs:
         path: vcpkg_installed
         key: vcpkg-x64-windows-static-release-${{ hashFiles('vcpkg.json', 'triplets/**') }}
 
+    - name: Cache do Vulkan SDK
+      if: inputs.vulkan == 'true'
+      id: vulkan-cache
+      uses: actions/cache@v4
+      with:
+        path: C:\VulkanSDK\1.4.363.0
+        key: vulkan-sdk-1.4.363.0
+
+    # O instalador também põe o vulkan-1.dll no System32; do cache, só o SDK volta (o build
+    # não precisa do runtime).
+    - name: Vulkan SDK
+      if: inputs.vulkan == 'true' && steps.vulkan-cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        $ver = "1.4.363.0"
+        $exe = "$env:RUNNER_TEMP\vulkansdk.exe"
+        $names = @("vulkansdk-windows-X64-$ver.exe", "VulkanSDK-$ver-Installer.exe")
+        foreach ($name in $names) {
+          try {
+            Invoke-WebRequest "https://sdk.lunarg.com/sdk/download/$ver/windows/$name" -OutFile $exe
+            break
+          } catch { Write-Host "não achei $name" }
+        }
+        if (-not (Test-Path $exe)) { throw "não consegui baixar o Vulkan SDK $ver" }
+        & $exe --root "C:\VulkanSDK\$ver" --accept-licenses --default-answer --confirm-command install | Out-Host
+        if (-not (Test-Path "C:\VulkanSDK\$ver\Bin\glslc.exe")) { throw "Vulkan SDK sem glslc" }
+
+    - name: VULKAN_SDK
+      if: inputs.vulkan == 'true'
+      shell: pwsh
+      run: |
+        "VULKAN_SDK=C:\VulkanSDK\1.4.363.0" >> $env:GITHUB_ENV
+        "C:\VulkanSDK\1.4.363.0\Bin" >> $env:GITHUB_PATH
+
+    # A release (Vulkan, flags do whisper.cpp) tem o próprio cache: o whisper.cpp só vem dele
+    # com as mesmas flags do .cargo/config.toml.
     - name: Cache do Cargo
       uses: Swatinem/rust-cache@v2
       with:
         workspaces: ". -> C:\\t"
+        prefix-key: ${{ inputs.vulkan == 'true' && format('v0-rust-vulkan-{0}', hashFiles('.cargo/config.toml')) || 'v0-rust' }}
 
     - name: Ferramentas cargo
       if: inputs.tools != ''

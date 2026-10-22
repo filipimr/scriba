@@ -1,6 +1,7 @@
 mod contrast;
 mod css;
 mod design;
+mod dist;
 mod fixtures;
 mod icon;
 mod models;
@@ -40,6 +41,16 @@ enum Cmd {
     },
     /// Gera os .ico do exe e da bandeja em assets/brand/ a partir de docs/brand/*.svg.
     Icon,
+    /// O build da release (o mesmo do release.yml): dist/scriba.exe com Vulkan, o large e o
+    /// small embutidos, o SHA-256, as licenças, a conferência das DLLs e o --self-test.
+    Dist {
+        /// Não roda o --self-test no fim.
+        #[arg(long)]
+        skip_self_test: bool,
+        /// Não limpa o whisper.cpp quando as flags mudam (o CI separa o cache pelas flags).
+        #[arg(long)]
+        trust_cache: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -50,6 +61,16 @@ fn main() -> anyhow::Result<()> {
         }
         Cmd::Css { check } => css::run(&root(), check),
         Cmd::Icon => icon::run(&root()),
+        Cmd::Dist {
+            skip_self_test,
+            trust_cache,
+        } => dist::run(
+            &root(),
+            &dist::Options {
+                skip_self_test,
+                trust_cache,
+            },
+        ),
     }
 }
 

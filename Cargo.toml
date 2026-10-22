@@ -9,6 +9,9 @@ publish = false
 # Embute o modelo da CPU (small), o VAD e a amostra do `--self-test`: a release do CI, que
 # transcreve no processador.
 embedded-cpu-model = ["scriba-model/embedded-cpu-model"]
+# Tudo embutido: o large para a GPU mais o pacote da CPU. A release completa (`cargo xtask
+# dist`, com `vulkan`).
+embedded-model = ["embedded-cpu-model", "scriba-model/embedded-model"]
 # whisper.cpp com backend Vulkan (exige o Vulkan SDK no build): `cargo run --features vulkan`.
 vulkan = ["whisper-rs/vulkan"]
 # O pipeline falso (`FakePipeline`) e a flag `--fake-pipeline`, para o E2E e os testes que

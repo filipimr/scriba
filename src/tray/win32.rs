@@ -376,6 +376,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 if w.added {
                     refresh_icon(w);
                     modify_icon(w, hwnd);
+                    let bar = match icon_for(system_uses_light_theme()) {
+                        TrayIcon::Dark => "clara",
+                        TrayIcon::Light => "escura",
+                    };
+                    eprintln!("bandeja: o tema mudou; ícone para a barra {bar}");
                 }
             });
             Some(0)
@@ -432,6 +437,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 // SAFETY: `nid` está preenchido e vive durante a chamada.
                 unsafe { Shell_NotifyIconW(NIM_DELETE, &nid) };
                 add_icon(w, hwnd);
+                if w.added {
+                    eprintln!("bandeja: a barra de tarefas voltou; ícone reposto");
+                }
                 true
             } else {
                 false

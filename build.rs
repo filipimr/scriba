@@ -46,6 +46,12 @@ fn main() {
     ] {
         println!("cargo:rustc-link-lib={lib}");
     }
+    // O exe abre sem o `vulkan-1.dll` (PC sem driver de GPU): o Windows só o carrega na
+    // primeira chamada, e os hooks de `src/delay_load.rs` cobrem a falta.
+    if std::env::var_os("CARGO_FEATURE_VULKAN").is_some() {
+        println!("cargo:rustc-link-arg-bins=/DELAYLOAD:vulkan-1.dll");
+        println!("cargo:rustc-link-arg-bins=delayimp.lib");
+    }
     resources();
 }
 
