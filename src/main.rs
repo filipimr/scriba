@@ -24,7 +24,8 @@ static __pfnDliNotifyHook2: scriba::delay_load::Hook = Some(scriba::delay_load::
 #[derive(Parser)]
 #[command(version, about = "Grava e transcreve")]
 struct Cli {
-    /// Transcreve uma amostra embutida em CPU e codifica um clipe curto com x264.
+    /// Transcreve uma amostra embutida onde o app transcreveria (GPU ou CPU) e codifica um
+    /// clipe curto com x264.
     #[arg(long)]
     self_test: bool,
 

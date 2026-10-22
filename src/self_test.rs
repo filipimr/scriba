@@ -54,6 +54,8 @@ pub struct Report {
     /// `large-v3-turbo`, `small` ou `base`.
     pub model: &'static str,
     pub text: String,
+    /// A carga do modelo, fora do limite: no runner ela varia com o disco.
+    pub load: Duration,
     pub transcribe: Duration,
     pub large: Large,
     /// O Windows acha o `vulkan-1.dll`.
@@ -77,10 +79,11 @@ impl fmt::Display for Report {
         };
         write!(
             f,
-            "backend: {}\nvulkan-1.dll: {dll}\ntranscrição ({}) {:.1?} → {}\nmodelo grande: {large}\n\
-             x264 {:.1?}\nwhisper.cpp: {}",
+            "backend: {}\nvulkan-1.dll: {dll}\ncarga ({}) {:.1?}\ntranscrição {:.1?} → {}\n\
+             modelo grande: {large}\nx264 {:.1?}\nwhisper.cpp: {}",
             self.backend,
             self.model,
+            self.load,
             self.transcribe,
             self.text.trim(),
             self.encode,
@@ -173,8 +176,13 @@ fn run_plans(plans: Vec<Plan>, models: Models, sample: &[u8]) -> anyhow::Result<
     let _ = std::fs::remove_file(&input);
     let audio = audio?;
 
+    // A carga fica fora do limite: o que denuncia um whisper.cpp sem `/O2` é a transcrição.
+    let asr = Asr::new(plans, models.clone());
+    let t = Instant::now();
+    asr.preload()?;
+    let load = t.elapsed();
     let t0 = Instant::now();
-    let transcription = Asr::new(plans, models.clone()).transcribe(&audio, |_| {}, &never)?;
+    let transcription = asr.transcribe(&audio, |_| {}, &never)?;
     let transcribe = t0.elapsed();
     let text = transcription
         .segments
@@ -218,6 +226,7 @@ fn run_plans(plans: Vec<Plan>, models: Models, sample: &[u8]) -> anyhow::Result<
         gpu: matches!(plan.backend, Backend::Gpu(_)),
         model: transcription.model,
         text,
+        load,
         transcribe,
         large,
         vulkan_dll: delay_load::vulkan_present(),
@@ -324,6 +333,7 @@ mod tests {
             gpu: false,
             model: "small",
             text: " bom dia ".into(),
+            load: Duration::from_millis(700),
             transcribe: Duration::from_millis(1500),
             large: Large::Loaded(Duration::from_millis(2300)),
             vulkan_dll: false,
@@ -334,7 +344,8 @@ mod tests {
         for part in [
             "backend: CPU, modelo da CPU",
             "vulkan-1.dll: ausente",
-            "(small)",
+            "carga (small) 700.0ms",
+            "transcrição 1.5s",
             "bom dia",
             "modelo grande: carregado em 2.3s",
             "x264",

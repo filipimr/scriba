@@ -13,8 +13,9 @@ pub const MAX_AGE: Duration = Duration::from_secs(24 * 3600);
 
 /// Parte do nome dos temporários do `--self-test` (`<pid>-<n>-scriba-self-test.wav`).
 pub const SELF_TEST_MARK: &str = "-scriba-self-test.";
-/// O fim do `.m4a` que ainda está sendo gravado.
-pub const PART_SUFFIX: &str = ".parte";
+/// O fim do `.m4a` que ainda está sendo gravado. Só o do Scriba: a `audio_dir` pode ser uma
+/// pasta como Downloads, com `.parte` de outros programas.
+pub const PART_SUFFIX: &str = ".m4a.parte";
 
 /// Apaga os temporários antigos: os do `--self-test` em `temp` e os `.parte` em `audio_dirs`
 /// (as pastas do histórico e a última pasta escolhida no "Guardar áudio"). Devolve quantos.
@@ -22,7 +23,7 @@ pub fn run(clock: &dyn Clock, temp: &Path, audio_dirs: &[PathBuf]) -> usize {
     let now = clock.now();
     let mut removed = sweep(temp, now, |name| name.contains(SELF_TEST_MARK));
     for dir in audio_dirs {
-        removed += sweep(dir, now, |name| name.ends_with(PART_SUFFIX));
+        removed += sweep(dir, now, |name| name.to_lowercase().ends_with(PART_SUFFIX));
     }
     if removed > 0 {
         eprintln!("limpeza: {removed} temporário(s) antigo(s) apagado(s)");
@@ -74,6 +75,8 @@ mod tests {
             temp.join("outro-programa.wav"),
             audio.join("Reunião.m4a.parte"),
             audio.join("Reunião.m4a"),
+            audio.join("download.zip.parte"),
+            audio.join("Aula.M4A.parte"),
         ];
         for f in &files {
             fs::write(f, "x").unwrap();
@@ -83,8 +86,8 @@ mod tests {
         clock.advance(MAX_AGE - Duration::from_secs(60));
         assert_eq!(run(&clock, &temp, &dirs), 0);
         clock.advance(Duration::from_secs(120));
-        assert_eq!(run(&clock, &temp, &dirs), 2);
+        assert_eq!(run(&clock, &temp, &dirs), 3);
         let left: Vec<bool> = files.iter().map(|f| f.exists()).collect();
-        assert_eq!(left, [false, true, false, true]);
+        assert_eq!(left, [false, true, false, true, true, false]);
     }
 }

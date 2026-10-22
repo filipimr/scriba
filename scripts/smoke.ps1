@@ -96,11 +96,13 @@ function Hits([string] $text) {
     return @($keywords | Where-Object { $t -match $_ }).Count
 }
 
-function Transcript([string] $html) {
-    if ($html -notmatch "Conclu") { throw "o job não concluiu: $html" }
-    $folder = Get-ChildItem $outputs -Directory | Sort-Object LastWriteTime | Select-Object -Last 1
-    $txt = Get-Content (Join-Path $folder.FullName "transcricao.txt") -Raw -Encoding UTF8
-    return $txt
+function Concluded([string] $html) { return $html -match "Conclu" }
+
+# O transcricao.txt deste job, pela rota de download (não pela pasta mais nova).
+function Transcript([string] $id, [string] $html) {
+    if (-not (Concluded $html)) { throw "o job não concluiu: $html" }
+    $r = Api "GET" "/api/jobs/$id/transcricao.txt"
+    return [Text.Encoding]::UTF8.GetString($r.RawContentStream.ToArray())
 }
 
 $proc = $null
@@ -149,7 +151,7 @@ try {
 
     Step "envio transcrito" {
         $id = JobId (Upload (Join-Path $Fixtures "fala.mp4")).Content
-        $txt = Transcript (WaitJob $id 600)
+        $txt = Transcript $id (WaitJob $id 600)
         $hits = Hits $txt
         if ($hits -lt 3) { throw "só $hits palavras-chave: $txt" }
         "$hits palavras-chave"
@@ -176,7 +178,15 @@ try {
             Start-Sleep -Seconds 8
             $player.Stop()
             $id = JobId (Api "POST" "/api/record/stop?painel=1").Content
-            $txt = Transcript (WaitJob $id 600)
+            $html = WaitJob $id 600
+            # O critério é "enviar ou gravar": sem som no Sandbox (o job falha por falta de
+            # fala), a gravação fica pulada, não reprovada.
+            if (-not (Concluded $html)) {
+                $info.gravacao = "não concluiu (sem fala?): " + ($html -replace "<[^>]+>", " " -replace "\s+", " ").Trim()
+                return "pulada"
+            }
+            $txt = Transcript $id $html
+            $info.gravacao = "transcrita"
             $info.gravacao_texto = $txt
             "transcrita, $(Hits $txt) palavras-chave (o loopback do Sandbox pode não ter som)"
         } | Out-Null

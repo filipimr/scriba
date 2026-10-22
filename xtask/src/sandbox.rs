@@ -158,9 +158,16 @@ pub fn wsb_config(input: &Path, output: &Path, gpu: bool) -> String {
          \x20   <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File {INSIDE}\\entrada\\rodar.ps1</Command>\r\n\
          \x20 </LogonCommand>\r\n\
          </Configuration>\r\n",
-        input.display(),
-        output.display()
+        xml(&input.display().to_string()),
+        xml(&output.display().to_string())
     )
+}
+
+/// Um caminho como texto do XML (um `&` no nome da pasta quebraria o `.wsb`).
+fn xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 #[cfg(test)]
@@ -182,6 +189,10 @@ mod tests {
             assert!(wsb.contains(part), "{part}\n{wsb}");
         }
         assert!(wsb_config(Path::new("e"), Path::new("s"), true).contains("<VGpu>Enable</VGpu>"));
+        assert!(
+            wsb_config(Path::new(r"C:\P&D\e"), Path::new("s"), false)
+                .contains(r"<HostFolder>C:\P&amp;D\e</HostFolder>")
+        );
     }
 
     #[test]
